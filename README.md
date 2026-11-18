@@ -1,6 +1,6 @@
 # Location Keeper
 
-A responsive React/Vite location explorer with a small Go API, a complete event feed, and optional Android ingestion integration. The frontend includes Cloudflare Pages configuration; the Go API can run behind a Cloudflare Tunnel.
+A responsive React/Vite location explorer with a small Go API, a complete event feed, and optional Android ingestion integration. The frontend runs as a Cloudflare Worker with static assets; the Go API can run behind a Cloudflare Tunnel.
 
 ## Run locally
 
@@ -35,26 +35,24 @@ PUBLIC_BASE_URL=http://127.0.0.1:8080 go run ./cmd/api
 
 Open **http://127.0.0.1:8080**. `WEB_DIR` can point to a different built frontend directory.
 
-## Cloudflare Pages frontend with a tunneled Go API
+## Cloudflare Worker frontend with a tunneled Go API
 
 The website is `https://admin-location-keep.rockyworks.in`; its upstream API is `https://api-admin-location-keep.rockyworks.in`.
 
-Pages Functions forward `/api/*`, `/auth/*` and `/healthz` to the API tunnel. The browser uses relative URLs on the website origin, so Google flow/session cookies stay on the website hostname and the Go server keeps its existing Origin checks. Static files do not invoke Functions.
+The Worker serves the Vite build as static assets and forwards `/api/*`, `/auth/*` and `/healthz` to the API tunnel. The browser uses relative URLs on the website origin, so Google flow/session cookies stay on the website hostname and the Go server keeps its existing Origin checks. Static assets bypass Worker code; the configured API routes run through the Worker.
 
-Connect this GitHub repository to Cloudflare **Pages**, using:
+From `web/`, build and deploy the Worker using the authenticated Wrangler CLI:
 
-| Setting | Value |
-| --- | --- |
-| Root directory | `web` |
-| Build command | `npm run build` |
-| Build output | `dist` |
-| Project name | `admin-location-keep` |
-| Node version variable | `NODE_VERSION=22.22.0` |
-| API origin | `API_ORIGIN=https://api-admin-location-keep.rockyworks.in` (included in `web/wrangler.jsonc`) |
+```sh
+npm ci
+npm run build
+npx wrangler whoami
+npx wrangler deploy
+```
 
-Commit the app plus `web/functions/`, `web/edge/`, `web/public/_routes.json` and `web/wrangler.jsonc`. The Git-integrated Pages build discovers Functions under the `web` project root. Uploading only static `dist/` files through dashboard drag-and-drop does not include Functions.
+`web/wrangler.jsonc` names the Worker `admin-location-keep`, serves `dist/`, and routes API/auth/health requests through `web/worker.ts`. It also sets the public API origin. Run the commands after each frontend change. For deployment from a clean checkout, use Node 22.12 or newer.
 
-After the build, associate `admin-location-keep.rockyworks.in` using the Pages project's **Custom domains** setup. Add the hostname through Pages before creating its CNAME record. Leave the API hostname routed to the existing tunnel.
+After the first deploy, add `admin-location-keep.rockyworks.in` to the Worker in the Cloudflare dashboard under **Workers & Pages → admin-location-keep → Settings → Domains & Routes → Add → Custom domain**. Keep `api-admin-location-keep.rockyworks.in` routed to the existing tunnel. Cloudflare provisions TLS for the website hostname.
 
 On the **Go host**, change and restart with:
 
@@ -62,7 +60,7 @@ On the **Go host**, change and restart with:
 PUBLIC_BASE_URL=https://admin-location-keep.rockyworks.in
 ```
 
-This is the browser origin, even though Go is reached through the separate API hostname. Keep `DATA_SOURCE=tidb` and all private database/Google/geocoding/Gmail credentials on the Go host. Only the public `API_ORIGIN` belongs in Pages configuration. Analytics access still follows the database `is_advanced` column.
+This is the browser origin, even though Go is reached through the separate API hostname. Keep `DATA_SOURCE=tidb` and all private database/Google/geocoding/Gmail credentials on the Go host. Only the public `API_ORIGIN` belongs in the Worker configuration. Analytics access still follows the database `is_advanced` column.
 
 Register both Google OAuth redirect URIs:
 
@@ -71,13 +69,13 @@ https://admin-location-keep.rockyworks.in/auth/callback
 https://admin-location-keep.rockyworks.in/auth/gmail/callback
 ```
 
-Add the website origin to the Geoapify browser map key's allowed origins. Pages preview URLs are not production OAuth origins; preview sign-in is unsupported against a backend configured for the production domain. Use a separately configured backend/OAuth origin for staging sign-in.
+Add the website origin to the Geoapify browser map key's allowed origins. Worker preview URLs are not production OAuth origins; preview sign-in is unsupported against a backend configured for the production domain. Use a separately configured backend/OAuth origin for staging sign-in.
 
 Validate the origin service on its host with `curl -fsS http://127.0.0.1:8080/healthz`, then check `/healthz` on the API hostname from an allowed external network. Expected JSON: `{"ok":true}`. The API root `/` can show a missing-frontend message when only Go is installed; it is not the health endpoint. The tunnel connector must reach Go from its own host/container. A connector running in another container cannot reach a host process through its container's `localhost`.
 
-Once Pages is deployed, `/healthz` and `/api/session` on the **website** hostname should return API JSON. Verify Google sign-in, device access, the database analytics flag and logout there. API/auth responses are private/no-store; do not put cache-everything rules over those routes.
+Once the Worker is deployed, `/healthz` and `/api/session` on the **website** hostname should return API JSON. Verify Google sign-in, device access, the database analytics flag and logout there. API/auth responses are private/no-store; do not put cache-everything rules over those routes.
 
-References: [Functions routing](https://developers.cloudflare.com/pages/functions/routing/), [Pages configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/), [custom domains](https://developers.cloudflare.com/pages/configuration/custom-domains/).
+References: [Workers static assets](https://developers.cloudflare.com/workers/static-assets/), [Wrangler configuration](https://developers.cloudflare.com/workers/wrangler/configuration/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
 
 ## Included
 
