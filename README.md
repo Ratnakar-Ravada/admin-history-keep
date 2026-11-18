@@ -50,9 +50,15 @@ npx wrangler whoami
 npx wrangler deploy
 ```
 
-`web/wrangler.jsonc` names the Worker `admin-location-keep`, serves `dist/`, and routes API/auth/health requests through `web/worker.ts`. It also sets the public API origin. Run the commands after each frontend change. For deployment from a clean checkout, use Node 22.12 or newer.
+`web/wrangler.jsonc` names the Worker `admin-history-keep`, serves `dist/`, and routes API/auth/health requests through `web/worker.ts`. It also sets the public API origin and attaches `admin-location-keep.rockyworks.in` as its custom domain. Run the commands after each frontend change. For deployment from a clean checkout, use Node 22.12 or newer.
 
-After the first deploy, add `admin-location-keep.rockyworks.in` to the Worker in the Cloudflare dashboard under **Workers & Pages → admin-location-keep → Settings → Domains & Routes → Add → Custom domain**. Keep `api-admin-location-keep.rockyworks.in` routed to the existing tunnel. Cloudflare provisions TLS for the website hostname.
+Wrangler manages the website custom domain from the checked-in configuration. In the Cloudflare dashboard, it appears under **Workers & Pages → admin-history-keep → Settings → Domains & Routes**. Keep `api-admin-location-keep.rockyworks.in` routed to the existing tunnel. Cloudflare provisions TLS for the website hostname.
+
+For the API tunnel's published application, set the local service URL to **`http://localhost:8080`** when the connector runs on the Go host. The Go server uses plain HTTP locally; the public API origin stays **`https://api-admin-location-keep.rockyworks.in`**, with TLS handled by Cloudflare. Setting the local service to `https://localhost:8080` causes a `502` because Go does not listen for TLS there. If the connector runs in a container, use a service address reachable from that container.
+
+If Wrangler reports `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` on a managed Mac, use a current Node version with the system trust store: `NODE_USE_SYSTEM_CA=1 npx wrangler whoami` (and the same prefix for `deploy`). This keeps certificate verification enabled.
+
+If a newly attached hostname returns `NXDOMAIN` locally while the dashboard shows its Worker DNS record, the network's DNS resolver may still have a cached negative answer. Check `dig admin-location-keep.rockyworks.in`; the SOA TTL in a negative response shows the remaining cache lifetime. Retry after expiry. A browser `ERR_EMPTY_RESPONSE` can also involve a managed proxy; if it persists after DNS resolves, ask the network administrator to check the hostname's proxy path.
 
 On the **Go host**, change and restart with:
 

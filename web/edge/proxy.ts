@@ -12,7 +12,7 @@ const jsonError = (status: number, code: string, error: string) =>
     },
   });
 
-// Only the Pages environment chooses the upstream. Browser-provided URLs,
+// Only the Worker environment chooses the upstream. Browser-provided URLs,
 // origins and forwarded-host headers must never select a proxy destination.
 export async function proxyAPI(
   { request, env }: ProxyContext,

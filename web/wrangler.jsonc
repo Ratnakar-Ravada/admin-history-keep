@@ -1,7 +1,11 @@
 {
-  "name": "admin-location-keep",
+  "name": "admin-history-keep",
   "main": "./worker.ts",
   "compatibility_date": "2026-11-18",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "admin-location-keep.rockyworks.in", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

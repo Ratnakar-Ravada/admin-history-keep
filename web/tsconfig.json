@@ -13,5 +13,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "edge", "functions", "vite.config.ts"]
+  "include": ["src", "edge", "worker.ts", "vite.config.ts"]
 }
