@@ -47,7 +47,10 @@ export function GmailPanel() {
         <Mail size={23} />
         <div>
           <h3>Email delivery</h3>
-          <p>Connect the Google account that will send your alerts.</p>
+          <p>
+            Optional Gmail permission for sending app alerts from your connected
+            account.
+          </p>
         </div>
       </div>
       {status.isPending ? (
@@ -129,8 +132,11 @@ export function GmailPanel() {
       )}
       {error && <p role="alert">{error}</p>}
       <p className="gmail-note">
-        Connecting Gmail does not send a message. Automated alerts remain coming
-        soon.
+        Gmail send access is intended only for app alerts sent from your
+        connected Google account to the email addresses you configure in Alerts.
+        It does not grant inbox reading access. Automated alerts and recipient
+        settings are coming soon. Connecting Gmail does not send a message.{" "}
+        <a href="/privacy.html#gmail">Privacy policy and how to disconnect</a>.
       </p>
     </section>
   );

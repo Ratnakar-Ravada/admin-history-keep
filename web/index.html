@@ -4,10 +4,61 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <meta name="theme-color" content="#204b3c" />
+    <meta
+      name="description"
+      content="Location Keeper is a private workspace for authorised device locations, recorded journeys and activity history. Learn about the app, Google permissions and privacy."
+    />
+    <link rel="stylesheet" href="/public.css" />
     <title>Location Keeper</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="public-site">
+        <header class="public-header">
+          <a class="public-brand" href="/">Location Keeper</a>
+          <nav aria-label="Privacy and support">
+            <a href="/terms.html">Terms of service</a>
+            <a href="/privacy.html">Privacy policy</a
+            ><a href="mailto:ratnakarravada11@gmail.com"
+              >Contact &amp; support</a
+            >
+          </nav>
+        </header>
+        <main>
+          <section class="legal-doc">
+            <span class="public-eyebrow"
+              >YOUR DEVICES. THEIR JOURNEYS. ONE CLEAR VIEW.</span
+            >
+            <h1>Location Keeper</h1>
+            <p>
+              A private workspace for location history, recorded journeys and
+              device activity. Explore the latest reported positions, review
+              journeys on a map and inspect activity logs for devices you own or
+              are authorised to view.
+            </p>
+            <h2>Your Google permissions</h2>
+            <p>
+              Google sign-in uses openid, email and profile to identify your
+              account and check workspace access. Optional Gmail send permission
+              is intended only for alerts from your connected account to
+              recipients configured in Alerts; it does not grant inbox reading
+              access. Automated alerts and recipient settings are coming soon.
+            </p>
+            <p>
+              <a href="/auth/login">Sign in with Google</a> ·
+              <a href="/privacy.html">Read the privacy policy</a>
+            </p>
+            <noscript
+              ><p>
+                The interactive workspace requires JavaScript. The app overview
+                and privacy policy remain available without JavaScript or
+                sign-in.
+              </p></noscript
+            >
+          </section>
+        </main>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

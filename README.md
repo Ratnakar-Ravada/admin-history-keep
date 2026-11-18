@@ -83,6 +83,42 @@ Once the Worker is deployed, `/healthz` and `/api/session` on the **website** ho
 
 References: [Workers static assets](https://developers.cloudflare.com/workers/static-assets/), [Wrangler configuration](https://developers.cloudflare.com/workers/wrangler/configuration/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
 
+## Google OAuth branding and scope verification
+
+The public homepage describes Location Keeper and its permissions. The privacy policy is a standalone HTML document that does not require JavaScript, a healthy API or a signed-in session. A PDF download contains the same policy. Operator and privacy contact: Ratnakar Ravada, `ratnakarravada11@gmail.com`.
+
+After deploying the frontend, use these production settings in Google Auth Platform:
+
+| Setting | Value |
+| --- | --- |
+| App name | `Location Keeper` (use the same name and logo throughout the app and consent screen) |
+| Homepage | `https://admin-location-keep.rockyworks.in/` |
+| Privacy policy | `https://admin-location-keep.rockyworks.in/privacy.html` |
+| Terms of service | `https://admin-location-keep.rockyworks.in/terms.html` |
+| Support email | `ratnakarravada11@gmail.com` |
+| Authorised domain | `rockyworks.in` |
+| Basic sign-in scopes | `openid`, `email`, `profile` |
+| Optional email scope | `https://www.googleapis.com/auth/gmail.send`, only when working alert delivery is ready for review |
+
+Verify `rockyworks.in` ownership in Google Search Console using an account that is also an owner or editor of the Google Cloud project. Confirm the published overview and policy are reachable in a signed-out browser and without Cloudflare Access or bot challenges. Use the existing exact HTTPS OAuth callbacks documented above. Use a separate project for development rather than adding localhost clients to the production submission. Google determines approval; publishing a privacy policy alone does not establish compliance.
+
+**Current Gmail review limitation:** sender authorisation and the send adapter exist, but the alert scheduler and recipient configuration are not implemented. The public copy says this explicitly. For a branding-only release, keep `GMAIL_ENABLED=false` on the Go host and request only the basic sign-in scopes; do not collect Gmail access for an unfinished feature. Submit `gmail.send` for sensitive-scope review only after users can configure recipient addresses and send an actual alert through the app. A policy describing a future feature is not a substitute for a working feature.
+
+For that later review, provide a recording of the production consent screen, optional Connect Gmail flow, recipient configuration, an alert sent from the connected account to a configured recipient, and disconnect/revocation. Explain that the app neither reads inbox contents nor requests broader Gmail scopes. Do not display passwords, OAuth tokens, private location history or unrelated personal data in the recording. Regular sign-in and Gmail authorisation remain separate flows.
+
+The policy discloses the current manual retention/deletion process. Operate the privacy contact mailbox, verify ownership of requests, and honour deletion and correction requests. Review the policy whenever providers, data collection or alert behaviour change.
+
+The canonical policy source is `web/public/privacy.html`. After changing it, regenerate and inspect the PDF:
+
+```sh
+# Use a Python environment with reportlab installed.
+python scripts/render_privacy_policy.py
+```
+
+This writes `output/pdf/location-keeper-privacy-policy.pdf` and the website download `web/public/privacy-policy.pdf`. Rebuild the frontend after updating either public document.
+
+References: [Google brand verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/brand-verification), [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [sensitive-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification).
+
 ## Included
 
 - **Live:** latest measured position, latest observed event, latest received upload, battery/network context and explicitly observed airplane state.

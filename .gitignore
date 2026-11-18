@@ -24,3 +24,5 @@ playwright-report/
 .wrangler/
 .dev.vars
 .dev.vars.*
+output/pdf/
+tmp/pdfs/

@@ -38,6 +38,7 @@ import { usePlaces } from "./usePlaces";
 import { GmailPanel } from "./GmailPanel";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { useUsage } from "./useUsage";
+import { PublicLanding } from "./PublicLanding";
 import type {
   Device,
   Event,
@@ -123,61 +124,14 @@ export default function App() {
     retry: 1,
     refetchInterval: 60000,
   });
-  if (session.isPending)
+  if (!session.data?.authenticated)
     return (
-      <div className="boot">
-        <MapPin />
-        <h1>Location Keeper</h1>
-        <p>Opening your workspace…</p>
-      </div>
-    );
-  if (session.error)
-    return (
-      <div className="boot">
-        <MapPin />
-        <h1>Couldn’t reach the API</h1>
-        <p>Check that the Go API is running.</p>
-        <ErrorBox error={session.error} />
-        <button className="primary" onClick={() => session.refetch()}>
-          Retry
-        </button>
-      </div>
-    );
-  if (!session.data!.authenticated)
-    return (
-      <div className="signin">
-        <div className="signin-logo">
-          <MapPin />
-        </div>
-        <span className="eyebrow">LOCATION KEEPER</span>
-        <h1>
-          A clearer sense
-          <br />
-          of where.
-        </h1>
-        <p>
-          Sign in to see your authorised devices,
-          <br />
-          their journeys and the moments between.
-        </p>
-        {location.search.includes("signin=failed") && (
-          <div className="inline-error">
-            Google sign-in could not be verified. Choose an authorised account
-            and try again.
-          </div>
-        )}
-        <a className="google-signin" href={session.data!.login_url}>
-          <img src="/google-signin.png" alt="Sign in with Google" />
-        </a>
-        <p className="signin-permissions">
-          Uses your Google name and verified email. Email alerts are coming
-          soon.
-        </p>
-        <span className="signin-note">
-          <ShieldCheck size={14} />
-          App sessions and API usage are recorded for usage analytics.
-        </span>
-      </div>
+      <PublicLanding
+        loginUrl={session.data?.login_url}
+        checking={session.isPending}
+        error={!!session.error}
+        onRetry={() => session.refetch()}
+      />
     );
   return <Workspace session={session.data!} />;
 }
@@ -1195,6 +1149,8 @@ function Workspace({ session }: { session: Session }) {
           <footer className="page-footer">
             <span>
               LOCATION KEEPER <i>·</i> A clearer sense of where.
+              {" · "}
+              <a href="/privacy.html">Privacy policy</a>
             </span>
             <span>
               {session.demo ? (
