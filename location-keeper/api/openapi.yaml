@@ -1,0 +1,524 @@
+openapi: 3.1.0
+info:
+  title: Location Keeper API
+  version: 1.1.0
+  description: Authenticated device history and a 20-record cursor-paginated event stream. Coordinates are private. No tracking writes or alert monitoring are provided.
+servers:
+  - url: /
+security:
+  - sessionCookie: []
+paths:
+  /healthz:
+    get:
+      security: []
+      responses:
+        "200":
+          {
+            description: "Process is responding; no sensitive configuration is returned.",
+          }
+  /api/session:
+    get:
+      security: []
+      responses:
+        "200":
+          description: Authentication status, safe Google viewer identity (subject, app user_id, name, email and current database is_advanced flag), analytics_enabled, demo flag, current UTC time, public map style and filter options. An unauthenticated result contains no device information.
+  /auth/login:
+    get:
+      security: []
+      responses:
+        "302":
+          {
+            description: "Google sign-in authorization-code flow with PKCE, state, nonce and account selection.",
+          }
+  /auth/callback:
+    get:
+      security: []
+      responses:
+        "303":
+          {
+            description: "Validate state, code, nonce, issuer and audience; upsert the app user and create a persistent session; set an encrypted HTTP-only session cookie or return to sign-in failure.",
+          }
+  /auth/logout:
+    post:
+      description: Requires a same-origin request. Revokes the saved app session and clears the application session cookie.
+      responses:
+        "200": { description: "Signed out." }
+  /api/email/status:
+    get:
+      description: Administrator-only sender configuration and saved-connection status. No OAuth tokens are returned. Automated alerts remain disabled.
+      responses:
+        "200":
+          {
+            description: "Sender enabled/connected/can_connect flags, configured sender email and capabilities.",
+          }
+        "403": { description: "Administrator access required." }
+  /api/email/connect:
+    post:
+      description: Same-origin administrator action. Signed-in account must match GMAIL_SENDER_EMAIL. Starts separate Gmail send and offline-access consent.
+      responses:
+        "200":
+          {
+            description: "Google authorization_url; encrypted flow cookie is set.",
+          }
+        "403": { description: "Account or origin rejected." }
+        "409":
+          {
+            description: "Gmail connection is not configured or demo is active.",
+          }
+  /auth/gmail/callback:
+    get:
+      description: Checks signed-in sender, PKCE, state, nonce, verified Google identity, granted gmail.send scope and refresh token. Saves encrypted server-side credentials; sends no message.
+      responses:
+        "303":
+          { description: "Returns to Alerts with connected or failed status." }
+  /api/email/disconnect:
+    post:
+      description: Same-origin administrator action by the configured sender. Deletes local credentials without revoking the Google project's other grants.
+      responses:
+        "200": { description: "Local sender disconnected." }
+        "403": { description: "Account or origin rejected." }
+  /api/usage/heartbeat:
+    post:
+      description: Same-origin authenticated heartbeat. Active means recent input on a visible page; it is an advisory activity estimate. This API call is classified as background.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: { type: boolean }
+      responses:
+        "200": { description: Activity accepted. }
+        "400": { description: Invalid heartbeat. }
+        "401": { description: Sign-in required. }
+        "403": { description: Invalid origin. }
+  /api/usage/view:
+    post:
+      description: Same-origin authenticated view-open event. Unknown views are rejected; no arbitrary payload is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [view]
+              properties:
+                view:
+                  {
+                    type: string,
+                    enum: [live, journeys, logs, alerts, analytics],
+                  }
+      responses:
+        "200": { description: View event accepted. }
+        "400": { description: Invalid view. }
+        "401": { description: Sign-in required. }
+        "403": { description: Invalid origin. }
+  /api/analytics/overview:
+    get:
+      description: Requires the current app_users.is_advanced database flag. Aggregates all app viewers. Returns totals, accounts, sessions, daily UTC traffic, top_users ranked by interaction_requests, routes, services, views and process-local pending_records/dropped_records/write_failures counters. Usage is eventually consistent and does not include direct browser map-tile calls.
+      parameters:
+        - { $ref: "#/components/parameters/AnalyticsDays" }
+      responses:
+        "200": { description: Analytics overview. }
+        "400": { description: Invalid filters. }
+        "401": { description: Sign-in required. }
+        "403": { description: Advanced access required. }
+        "503": { description: Database temporarily unavailable. }
+  /api/analytics/users:
+    get:
+      description: Requires the current app_users.is_advanced database flag. All registered app viewers, newest created first. Includes id, email, display_name, is_advanced, created_at, last_login_at, last_seen_at and request count within the selected period. Never returns Google subjects or session token hashes.
+      parameters:
+        - { $ref: "#/components/parameters/AnalyticsDays" }
+        - { $ref: "#/components/parameters/AnalyticsCursor" }
+      responses:
+        "200": { $ref: "#/components/responses/AnalyticsPage" }
+        "401": { description: Sign-in required. }
+        "403": { description: Advanced access required. }
+        "409": { description: Cursor expired or filters changed. }
+  /api/analytics/sessions:
+    get:
+      description: Requires the current app_users.is_advanced database flag. Sessions started in the period, ordered by started_at and id descending. Includes user context, coarse browser/OS/device, activity/expiry/logout timestamps and lifetime API request count. A session with no logout may already be expired; expiry is authoritative.
+      parameters:
+        - { $ref: "#/components/parameters/AnalyticsDays" }
+        - { $ref: "#/components/parameters/AnalyticsUser" }
+        - { $ref: "#/components/parameters/AnalyticsCursor" }
+      responses:
+        "200": { $ref: "#/components/responses/AnalyticsPage" }
+        "401": { description: Sign-in required. }
+        "403": { description: Advanced access required. }
+        "409": { description: Cursor expired or filters changed. }
+  /api/analytics/requests:
+    get:
+      description: Requires the current app_users.is_advanced database flag. Newest request timestamp/id first. Rows include normalized method/route, service, app_view, is_background, status_code, duration_ms, response_bytes, occurred_at and actor IDs/email. Query values, bodies, raw headers, IPs and credentials are excluded. Anonymous API requests have null user/session IDs.
+      parameters:
+        - { $ref: "#/components/parameters/AnalyticsDays" }
+        - { $ref: "#/components/parameters/AnalyticsUser" }
+        - { $ref: "#/components/parameters/AnalyticsCursor" }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: service
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                usage,
+                analytics,
+                place_names,
+                email,
+                live_locations,
+                journeys,
+                activity_logs,
+                devices,
+                authentication,
+                other,
+              ]
+      responses:
+        "200": { $ref: "#/components/responses/AnalyticsPage" }
+        "400": { description: Invalid filters. }
+        "401": { description: Sign-in required. }
+        "403": { description: Advanced access required. }
+        "409": { description: Cursor expired or filters changed. }
+  /api/devices:
+    get:
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 } }
+      responses:
+        "200":
+          description: Authorised registry only. Names can repeat; device_id is the identity. Credential hashes and upload tokens are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Device" },
+                    }
+  /api/events:
+    get:
+      description: Newest recorded event first. A filter/access change requires a new cursor chain. Exactly 20 maximum rows across all selected devices, including no-fix events. Repeated parameters are rejected.
+      parameters:
+        - { $ref: "#/components/parameters/Devices" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Timezone" }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, const: 20, default: 20 },
+          }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 4096 } }
+        - {
+            name: reasons,
+            in: query,
+            description: Comma-separated stored reason values.,
+            schema: { type: string },
+          }
+        - {
+            name: severity,
+            in: query,
+            description: Comma-separated attention/positive/limited/neutral.,
+            schema: { type: string },
+          }
+        - {
+            name: outcomes,
+            in: query,
+            description: Comma-separated execution outcomes; not_recorded includes null.,
+            schema: { type: string },
+          }
+        - {
+            name: statuses,
+            in: query,
+            description: Comma-separated fresh/last_known/unavailable/disabled.,
+            schema: { type: string },
+          }
+        - {
+            name: transports,
+            in: query,
+            description: Comma-separated unknown/none/wifi/cellular/other.,
+            schema: { type: string },
+          }
+      responses:
+        "200":
+          description: One cursor page. A final page can contain fewer than 20 records. next_cursor is null at the end.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [
+                    items,
+                    page_cursor,
+                    next_cursor,
+                    has_more,
+                    as_of,
+                    expires_at,
+                    order,
+                  ]
+                properties:
+                  items:
+                    {
+                      type: array,
+                      maxItems: 20,
+                      items: { $ref: "#/components/schemas/Event" },
+                    }
+                  page_cursor:
+                    {
+                      type: [string, "null"],
+                      description: Replays this exact page at the same snapshot,
+                      including the original first page.,
+                    }
+                  next_cursor: { type: [string, "null"] }
+                  has_more: { type: boolean }
+                  as_of: { type: string, format: date-time }
+                  expires_at: { type: string, format: date-time }
+                  order:
+                    { type: string, const: "recorded_at_desc,event_id_desc" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: cursor_expired or cursor_scope_changed. Explicitly restart at the first 20; never append the restarted page to the old list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/events/changes:
+    get:
+      parameters:
+        - { $ref: "#/components/parameters/Devices" }
+        - {
+            name: as_of,
+            in: query,
+            required: true,
+            schema: { type: string, format: date-time },
+          }
+      responses:
+        "200":
+          {
+            description: "A boolean available indicates newly received events for authorised selected devices; this does not modify the current pagination snapshot.",
+          }
+  /api/locations/latest:
+    get:
+      parameters:
+        - { $ref: "#/components/parameters/Devices" }
+      responses:
+        "200":
+          {
+            description: "Per-device latest received event, latest observed event, latest captured fix and explicitly observed airplane state/time. These can refer to different records.",
+          }
+  /api/locations/history:
+    get:
+      parameters:
+        - { $ref: "#/components/parameters/Devices" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Timezone" }
+      responses:
+        "200":
+          {
+            description: "Bounded map observations ordered by capture time, total/returned counts, simplified flag and resolution. More than 5000 observations uses explicitly labelled daily representative observations. Focused-day interruption boundaries prevent misleading links. This is independent of log pagination.",
+          }
+  /api/activity/summary:
+    get:
+      parameters:
+        - { $ref: "#/components/parameters/Devices" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Timezone" }
+      responses:
+        "200":
+          {
+            description: "Counts of events, positions and attention events grouped by local calendar day in the requested timezone.",
+          }
+  /api/places/resolve:
+    post:
+      description: Same-origin only. Accepts authorised event IDs instead of arbitrary coordinates. Returns cached results or pending/unavailable/not_configured/no_fix/busy statuses. Slow provider work is queued.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [event_ids]
+              properties:
+                event_ids:
+                  {
+                    type: array,
+                    maxItems: 100,
+                    items: { type: string, format: uuid },
+                  }
+                refresh:
+                  {
+                    type: boolean,
+                    default: false,
+                    description: Explicit refresh is limited to one event and coalesced/rate limited.,
+                  }
+      responses:
+        "200":
+          {
+            description: "items maps each event ID to status and an optional provider-labelled Place. No-fix records are never geocoded.",
+          }
+        "403": { $ref: "#/components/responses/Error" }
+components:
+  responses:
+    AnalyticsPage:
+      description: Up to 20 analytics records. Numeric database aggregate fields may be serialized as numbers or decimal strings.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items, has_more, next_cursor]
+            properties:
+              items:
+                type: array
+                maxItems: 20
+                items: { type: object, additionalProperties: true }
+              has_more: { type: boolean }
+              next_cursor: { type: [string, "null"] }
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: lk_session }
+  parameters:
+    AnalyticsDays:
+      name: days
+      in: query
+      description: UTC calendar days including today. Dashboard presets are 7/30/90.
+      schema: { type: integer, minimum: 1, maximum: 90, default: 7 }
+    AnalyticsUser:
+      name: user_id
+      in: query
+      schema: { type: string, format: uuid }
+    AnalyticsCursor:
+      name: cursor
+      in: query
+      description: Opaque signed keyset cursor. Expires after 15 minutes and binds the list and filters. Lists are eventually consistent.
+      schema: { type: string, maxLength: 1000 }
+    Devices:
+      {
+        name: device_ids,
+        in: query,
+        description: Comma-separated authorised UUIDs; maximum 20. Empty selection returns no rows.,
+        schema: { type: string },
+      }
+    From:
+      {
+        name: from,
+        in: query,
+        required: true,
+        description: UTC inclusive bound inside the last 90 local calendar days.,
+        schema: { type: string, format: date-time },
+      }
+    To:
+      {
+        name: to,
+        in: query,
+        required: true,
+        description: UTC exclusive bound,
+        at most the next local midnight.,
+        schema: { type: string, format: date-time },
+      }
+    Timezone:
+      {
+        name: timezone,
+        in: query,
+        schema: { type: string, default: Asia/Kolkata },
+      }
+  responses:
+    Error:
+      description: Stable error code and safe user-facing message. No internal SQL, credentials or coordinates are included.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [code, error]
+      properties:
+        code: { type: string }
+        error: { type: string }
+    Device:
+      type: object
+      required: [device_id, device_name, detected_device_name, label, revoked]
+      properties:
+        device_id: { type: string, format: uuid }
+        device_name: { type: string }
+        detected_device_name: { type: string }
+        label: { type: string }
+        revoked:
+          {
+            type: boolean,
+            description: Upload registration status; distinct from viewer grants.,
+          }
+    Event:
+      type: object
+      required:
+        [
+          event_id,
+          device_id,
+          recorded_at,
+          received_at,
+          reason,
+          location_status,
+          severity,
+          title,
+        ]
+      properties:
+        event_id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        recorded_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        executed_at: { type: [string, "null"], format: date-time }
+        scheduled_for: { type: [string, "null"], format: date-time }
+        captured_at: { type: [string, "null"], format: date-time }
+        execution_status:
+          {
+            type: [string, "null"],
+            enum:
+              [
+                completed,
+                unavailable,
+                disabled,
+                permission_missing,
+                missed,
+                cancelled,
+                null,
+              ],
+          }
+        reason: { type: string }
+        location_status:
+          { type: string, enum: [fresh, last_known, unavailable, disabled] }
+        network_transport:
+          { type: string, enum: [unknown, none, wifi, cellular, other] }
+        latitude: { type: [number, "null"], minimum: -90, maximum: 90 }
+        longitude: { type: [number, "null"], minimum: -180, maximum: 180 }
+        accuracy_m: { type: [number, "null"] }
+        battery_percent: { type: [integer, "null"], minimum: 0, maximum: 100 }
+        fix_age_ms: { type: [integer, "null"] }
+        is_mock: { type: boolean }
+        permission_accuracy: { type: string }
+        accuracy_mode: { type: string }
+        airplane_mode_enabled:
+          {
+            type: [boolean, "null"],
+            description: Explicit observation or an explicit on/off reason; unknown remains null.,
+          }
+        severity:
+          { type: string, enum: [attention, positive, limited, neutral] }
+        title: { type: string }
+        place: { $ref: "#/components/schemas/Place" }
+    Place:
+      type: object
+      properties:
+        label: { type: string }
+        city: { type: string }
+        country: { type: string }
+        level: { type: string, enum: [area, city] }
+        provider: { type: string }
+        looked_up_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        attribution: { type: string }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="managed_command_copied">Command copied. Run it from your computer only after preparing the test device.</string>
+    <string name="managed_auto_upload">Automatically upload to my configured database</string>
+    <string name="managed_notification_allowed">Notification permission is already allowed.</string>
+    <string name="managed_status">%1$s\nTracking requested: %2$s\nInterval: %3$d minute(s)\n%4$s\n%5$s</string>
+    <string name="managed_lock_required">Set a PIN, password, or pattern in phone Settings before changing management controls.</string>
+    <string name="managed_change_cancelled">Management change cancelled.</string>
+    <string name="managed_notification_settings">You can manage notification visibility in the app\'s system settings.</string>
+</resources>

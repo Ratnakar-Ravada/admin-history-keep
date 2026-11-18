@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="tracking_accuracy_mode" type="id" />
+    <item name="tracking_interval" type="id" />
+    <string name="tracking_accuracy_label">Automatic location accuracy (stop tracking to change)</string>
+    <string name="tracking_accuracy_battery">Battery Saver Mode (coarse, kilometer-scale accuracy)</string>
+    <string name="tracking_accuracy_high">High Accuracy Mode (precision limited by permission and reception)</string>
+    <string name="tracking_accuracy_legacy">Earlier version</string>
+    <string name="tracking_clock_explanation">Intervals follow the phone clock. A 30-minute interval targets :00 and :30, independently of extra wake, Location, or internet events. Each record keeps its reason, event time, intended clock slot, location measurement time, and database receipt separately.</string>
+    <string name="tracking_clock_access">Clock timing / exact alarm access</string>
+    <string name="tracking_clock_access_explanation">Exact alarm access helps Android wake the tracker at clock boundaries. Android and phone battery controls can still delay execution, and internet or GPS delays can delay delivery. The record shows its intended slot and actual event time. If no position is available, the event is still recorded without inventing coordinates. Open system settings to review access.</string>
+    <string name="tracking_clock_allowed">Exact clock alarms allowed</string>
+    <string name="tracking_clock_best_effort">Best-effort clock alarms — exact access is off</string>
+    <string name="tracking_status_lines">%1$s\n%2$s</string>
+    <string name="tracking_clock_status">Accuracy: %1$s\nClock timing: %2$s</string>
+    <string name="tracking_active_configuration">%1$s · Clock-aligned %2$d-minute interval</string>
+    <string name="record_reason">Reason: %1$s</string>
+    <string name="record_event_time">Event recorded %1$s</string>
+    <string name="record_scheduled_time">Intended clock slot %1$s</string>
+    <string name="record_position_measured">Position measured %1$s</string>
+    <string name="record_last_known">LAST KNOWN POSITION — measured earlier</string>
+    <string name="record_location_disabled">Location was off for this event</string>
+    <string name="record_location_unavailable">No location available for this event</string>
+    <string name="record_configuration">Mode: %1$s · Network: %2$s</string>
+    <string name="record_accuracy">Reported accuracy ±%1$s m · %2$s permission</string>
+    <string name="record_position_age">Position age when recorded: %1$s</string>
+    <string name="reason_app_launch">Application launch / foreground</string>
+    <string name="reason_manual">Manual refresh / save</string>
+    <string name="reason_periodic">Periodic clock slot</string>
+    <string name="reason_screen_wake">Screen wake</string>
+    <string name="reason_location_on">Location turned on</string>
+    <string name="reason_location_off">Location turned off</string>
+    <string name="reason_internet_on">Internet became available</string>
+    <string name="reason_internet_off">Internet became unavailable</string>
+    <string name="reason_network_changed">Network connection changed</string>
+    <string name="reason_tracking_start">Tracking started</string>
+    <string name="reason_boot_recovery">Recovery after reboot</string>
+    <string name="reason_location_available">A new location became available</string>
+    <string name="reason_legacy">Earlier record — reason unavailable</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_cellular">Mobile data</string>
+    <string name="network_none">Offline</string>
+    <string name="network_other">Other</string>
+    <string name="network_unknown">Unknown</string>
+    <string name="reason_airplane_mode_on">Airplane mode on</string>
+    <string name="reason_airplane_mode_off">Airplane mode off</string>
+</resources>

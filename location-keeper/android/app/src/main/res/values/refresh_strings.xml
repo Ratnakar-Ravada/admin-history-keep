@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="refresh_readings" type="id" />
+    <item name="auto_refresh_readings" type="id" />
+    <item name="readings_refresh_status" type="id" />
+    <item name="readings_count" type="id" />
+    <string name="refresh_now">↻ Refresh</string>
+    <string name="refreshing_readings">Refreshing…</string>
+    <string name="auto_refresh_30_seconds">Auto refresh (30s)</string>
+    <string name="not_refreshed_yet">not yet</string>
+    <string name="refresh_in_progress">Refreshing saved readings · Last updated %1$s</string>
+    <string name="refresh_automatic_status">Last updated %1$s · Next refresh in %2$d s</string>
+    <string name="refresh_manual_status">Last updated %1$s · Auto refresh paused</string>
+    <string name="periodic_overview">Periodic saving: %1$s\nAutomatic restart: %2$s</string>
+    <string name="saving_running">running</string>
+    <string name="saving_paused">requested, currently paused — open Periodic saving</string>
+    <string name="saving_off">off</string>
+    <string name="restart_off">off</string>
+    <string name="restart_ready">enabled · permission granted</string>
+    <string name="restart_permission_missing">requested · Allow all the time permission needed</string>
+    <string name="recovery_setup_status">Service: %1$s · Restart: %2$s\n%3$s</string>
+    <string name="restart_option_on">Automatic restart: ON</string>
+    <string name="restart_option_off">Automatic restart: OFF — configure</string>
+    <string name="restart_option_permission">Automatic restart: permission needed</string>
+</resources>

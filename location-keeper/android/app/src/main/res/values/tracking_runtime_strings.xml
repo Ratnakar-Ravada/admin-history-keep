@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tracking_power_explanation">Choose battery saving for low-power location requests targeting about 10 km accuracy, or high precision for GPS-level requests using more battery. Neither guarantees a fix or accuracy. Records are sent promptly using the latest available position, clearly marked if it is last known or unavailable. Manual capture keeps its current high-accuracy request.</string>
+    <string name="tracking_recovery_explanation">Previously started saving resumes when this app is reopened, including after force-stop or returning from permission/battery settings. Stop tracking keeps it off. If Android kills the process, changing settings alone may not restart it until you reopen the app or another permitted recovery event occurs.</string>
+    <string name="tracking_battery_settings">Battery / background activity settings</string>
+    <string name="tracking_battery_explanation">Android and phone battery controls can delay saving. Use the system settings to allow background activity if needed. This app does not hold a permanent wake lock or use an alarm watchdog.</string>
+    <string name="tracking_notification_settings">Notification appearance</string>
+    <string name="tracking_notification_explanation">Android requires this app to post a foreground-service notification for continuous location saving. It is quiet by default. System settings control its visibility; some phones let you hide this channel. Android may still show system privacy or running-app indicators.</string>
+    <string name="tracking_open_settings">Open settings</string>
+</resources>
