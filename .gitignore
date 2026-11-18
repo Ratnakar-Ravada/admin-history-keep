@@ -21,3 +21,6 @@ android/cloud.properties
 *.enc
 test-results/
 playwright-report/
+.wrangler/
+.dev.vars
+.dev.vars.*

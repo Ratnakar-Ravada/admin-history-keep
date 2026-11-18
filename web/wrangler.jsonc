@@ -1,0 +1,8 @@
+{
+  "name": "admin-location-keep",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-11-18",
+  "vars": {
+    "API_ORIGIN": "https://api-admin-location-keep.rockyworks.in",
+  },
+}

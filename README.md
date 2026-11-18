@@ -1,6 +1,6 @@
 # Location Keeper
 
-A responsive React/Vite location explorer with a small Go API, a complete event feed, and optional Android ingestion integration. Hosting and deployment configuration are intentionally outside this repository.
+A responsive React/Vite location explorer with a small Go API, a complete event feed, and optional Android ingestion integration. The frontend includes Cloudflare Pages configuration; the Go API can run behind a Cloudflare Tunnel.
 
 ## Run locally
 
@@ -35,6 +35,50 @@ PUBLIC_BASE_URL=http://127.0.0.1:8080 go run ./cmd/api
 
 Open **http://127.0.0.1:8080**. `WEB_DIR` can point to a different built frontend directory.
 
+## Cloudflare Pages frontend with a tunneled Go API
+
+The website is `https://admin-location-keep.rockyworks.in`; its upstream API is `https://api-admin-location-keep.rockyworks.in`.
+
+Pages Functions forward `/api/*`, `/auth/*` and `/healthz` to the API tunnel. The browser uses relative URLs on the website origin, so Google flow/session cookies stay on the website hostname and the Go server keeps its existing Origin checks. Static files do not invoke Functions.
+
+Connect this GitHub repository to Cloudflare **Pages**, using:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `web` |
+| Build command | `npm run build` |
+| Build output | `dist` |
+| Project name | `admin-location-keep` |
+| Node version variable | `NODE_VERSION=22.22.0` |
+| API origin | `API_ORIGIN=https://api-admin-location-keep.rockyworks.in` (included in `web/wrangler.jsonc`) |
+
+Commit the app plus `web/functions/`, `web/edge/`, `web/public/_routes.json` and `web/wrangler.jsonc`. The Git-integrated Pages build discovers Functions under the `web` project root. Uploading only static `dist/` files through dashboard drag-and-drop does not include Functions.
+
+After the build, associate `admin-location-keep.rockyworks.in` using the Pages project's **Custom domains** setup. Add the hostname through Pages before creating its CNAME record. Leave the API hostname routed to the existing tunnel.
+
+On the **Go host**, change and restart with:
+
+```dotenv
+PUBLIC_BASE_URL=https://admin-location-keep.rockyworks.in
+```
+
+This is the browser origin, even though Go is reached through the separate API hostname. Keep `DATA_SOURCE=tidb` and all private database/Google/geocoding/Gmail credentials on the Go host. Only the public `API_ORIGIN` belongs in Pages configuration. Analytics access still follows the database `is_advanced` column.
+
+Register both Google OAuth redirect URIs:
+
+```text
+https://admin-location-keep.rockyworks.in/auth/callback
+https://admin-location-keep.rockyworks.in/auth/gmail/callback
+```
+
+Add the website origin to the Geoapify browser map key's allowed origins. Pages preview URLs are not production OAuth origins; preview sign-in is unsupported against a backend configured for the production domain. Use a separately configured backend/OAuth origin for staging sign-in.
+
+Validate the origin service on its host with `curl -fsS http://127.0.0.1:8080/healthz`, then check `/healthz` on the API hostname from an allowed external network. Expected JSON: `{"ok":true}`. The API root `/` can show a missing-frontend message when only Go is installed; it is not the health endpoint. The tunnel connector must reach Go from its own host/container. A connector running in another container cannot reach a host process through its container's `localhost`.
+
+Once Pages is deployed, `/healthz` and `/api/session` on the **website** hostname should return API JSON. Verify Google sign-in, device access, the database analytics flag and logout there. API/auth responses are private/no-store; do not put cache-everything rules over those routes.
+
+References: [Functions routing](https://developers.cloudflare.com/pages/functions/routing/), [Pages configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/), [custom domains](https://developers.cloudflare.com/pages/configuration/custom-domains/).
+
 ## Included
 
 - **Live:** latest measured position, latest observed event, latest received upload, battery/network context and explicitly observed airplane state.
@@ -65,7 +109,7 @@ For the browser key, add the origins you use, without a URL path:
 http://127.0.0.1:8080
 http://127.0.0.1:5173
 http://localhost:5173
-https://admin.location-keep.rockyworks.in
+https://admin-location-keep.rockyworks.in
 ```
 
 These are entries for **Allowed origins**. If using **Allowed HTTP referrers** instead, Geoapify supports regular-expression patterns; follow that field's syntax. Its **CORS Access-Control-Allow-Origin** setting alone does not protect a key. Separate keys within one Geoapify project share the project's quota. See the [official API-key guide](https://myprojects.geoapify.com/help/api-keys/).
@@ -94,7 +138,7 @@ Google is the only sign-in provider. It uses Google's standard server-side autho
    http://127.0.0.1:8080/auth/callback
    http://127.0.0.1:5173/auth/callback
    http://localhost:5173/auth/callback
-   https://admin.location-keep.rockyworks.in/auth/callback
+   https://admin-location-keep.rockyworks.in/auth/callback
    ```
 
    **With the default Vite development setup, register both `http://127.0.0.1:5173/auth/callback` and `http://127.0.0.1:5173/auth/gmail/callback`.** Registering only port 8080 produces `redirect_uri_mismatch` while the app uses port 5173. Put these in **Authorized redirect URIs**, not JavaScript origins. After saving, return to the app and begin sign-in again.
@@ -126,7 +170,7 @@ Add a second **Authorized redirect URI** to the Web application client, matching
 http://127.0.0.1:8080/auth/gmail/callback
 http://127.0.0.1:5173/auth/gmail/callback
 http://localhost:5173/auth/gmail/callback
-https://admin.location-keep.rockyworks.in/auth/gmail/callback
+https://admin-location-keep.rockyworks.in/auth/gmail/callback
 ```
 
 Configure the sender:
