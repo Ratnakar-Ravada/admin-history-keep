@@ -29,6 +29,9 @@ const advanced = (v: unknown) => v === true || Number(v) === 1;
 const serviceName = (v: string) =>
   ({
     activity_logs: "Activity logs",
+    calls: "Calls history",
+    notifications: "Notification history",
+    app_usage: "Device app usage",
     live_locations: "Live locations",
     place_names: "Place names",
     authentication: "Sign-in & sessions",

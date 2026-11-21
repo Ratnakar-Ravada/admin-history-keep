@@ -106,11 +106,13 @@ test("map data is independent of event pages, broad history is explicit, alerts 
   await expect(page.locator(".playback-slider>div").first()).toContainText(
     "points",
   );
-  const points = await page
-    .locator(".playback-slider>div>span")
-    .first()
-    .innerText();
-  expect(parseInt(points)).toBeGreaterThan(20);
+  await expect
+    .poll(async () =>
+      parseInt(
+        await page.locator(".playback-slider>div>span").first().innerText(),
+      ),
+    )
+    .toBeGreaterThan(20);
   await page.getByLabel("Date period").selectOption("90");
   await expect(page.locator(".resolution-note")).toContainText(
     "daily representative",

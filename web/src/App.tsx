@@ -11,12 +11,14 @@ import {
   Clock,
   Download,
   Globe,
+  Grid2X2,
   Info,
   ListFilter,
   LogOut,
   Map,
   MapPin,
   Navigation,
+  Phone,
   Pause,
   Play,
   Plus,
@@ -39,6 +41,7 @@ import { GmailPanel } from "./GmailPanel";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { useUsage } from "./useUsage";
 import { PublicLanding } from "./PublicLanding";
+import { HistoryPage } from "./HistoryPage";
 import type {
   Device,
   Event,
@@ -48,11 +51,22 @@ import type {
   Session,
   Summary,
 } from "./types";
-type View = "live" | "journeys" | "logs" | "alerts" | "analytics";
+type View =
+  | "live"
+  | "journeys"
+  | "logs"
+  | "calls"
+  | "notifications"
+  | "app-usage"
+  | "alerts"
+  | "analytics";
 const navigation: { id: View; label: string; icon: typeof Map }[] = [
   { id: "live", label: "Live", icon: Map },
   { id: "journeys", label: "Journeys", icon: Route },
   { id: "logs", label: "Activity logs", icon: Activity },
+  { id: "calls", label: "Calls", icon: Phone },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "app-usage", label: "App usage", icon: Grid2X2 },
   { id: "alerts", label: "Alerts", icon: Bell },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
 ];
@@ -165,6 +179,12 @@ function Workspace({ session }: { session: Session }) {
     }),
     [playIndex, setPlayIndex] = useState<number | null>(null),
     [playing, setPlaying] = useState(false);
+  const historyView =
+    view === "calls" || view === "notifications" || view === "app-usage";
+  const activeNav = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeNav.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [view]);
   useUsage(!!session.analytics_enabled, view);
   const availableNavigation = navigation.filter(
     (n) => n.id !== "analytics" || session.user?.is_advanced,
@@ -238,7 +258,7 @@ function Workspace({ session }: { session: Session }) {
           new URLSearchParams({ device_ids: filters.devices.join(",") }),
         { signal },
       ),
-    enabled: initialised.current,
+    enabled: initialised.current && !historyView,
     refetchInterval: view === "live" ? 30000 : false,
     refetchOnWindowFocus: false,
   });
@@ -380,6 +400,18 @@ function Workspace({ session }: { session: Session }) {
       "Understand the moments behind the map.",
       "App users, sessions and the services they use.",
     ],
+    calls: [
+      "Calls history",
+      "Calls recorded on your devices, with their duration and details.",
+    ],
+    notifications: [
+      "Notification history",
+      "Revisit the notification text and events your devices captured.",
+    ],
+    "app-usage": [
+      "App usage history",
+      "Explore daily app usage and estimated sessions on your devices.",
+    ],
     alerts: [
       "Stay a little closer.",
       "Thoughtful signals. Fewer things to keep in mind.",
@@ -472,13 +504,21 @@ function Workspace({ session }: { session: Session }) {
                   <span>
                     <b>{d.device_name}</b>
                     <small>
-                      {state?.latest_fix?.place?.label ??
-                        places?.[state?.latest_fix?.event_id ?? ""]?.place
-                          ?.label ??
-                        d.detected_device_name}
+                      {historyView
+                        ? d.detected_device_name
+                        : (state?.latest_fix?.place?.label ??
+                          places?.[state?.latest_fix?.event_id ?? ""]?.place
+                            ?.label ??
+                          d.detected_device_name)}
                     </small>
                     <span className="device-report">
-                      {state?.latest_fix?.captured_at ? (
+                      {historyView ? (
+                        filters.devices.includes(d.device_id) ? (
+                          "Included in this history"
+                        ) : (
+                          "Select to include history"
+                        )
+                      ) : state?.latest_fix?.captured_at ? (
                         <>
                           <i />
                           Measured{" "}
@@ -541,6 +581,7 @@ function Workspace({ session }: { session: Session }) {
             {availableNavigation.map((n) => (
               <button
                 key={n.id}
+                ref={view === n.id ? activeNav : undefined}
                 aria-current={view === n.id ? "page" : undefined}
                 className={view === n.id ? "active" : ""}
                 onClick={() => go(n.id)}
@@ -602,7 +643,7 @@ function Workspace({ session }: { session: Session }) {
             <>
               <section
                 className="filterbar"
-                aria-label="Location and activity filters"
+                aria-label="Device and date filters"
               >
                 {view !== "live" && (
                   <div className="date-control">
@@ -708,7 +749,10 @@ function Workspace({ session }: { session: Session }) {
                 )}
               </section>
               <div
-                className={"explorer " + (view === "logs" ? "logs-layout" : "")}
+                className={
+                  "explorer " +
+                  (view === "logs" || historyView ? "logs-layout" : "")
+                }
               >
                 <aside
                   className={
@@ -767,7 +811,15 @@ function Workspace({ session }: { session: Session }) {
                   )}
                 </aside>
                 <div className="content-column">
-                  {view === "logs" ? (
+                  {historyView ? (
+                    <HistoryPage
+                      key={view}
+                      kind={view as "calls" | "notifications" | "app-usage"}
+                      filters={filters}
+                      devices={devices}
+                      generation={generation}
+                    />
+                  ) : view === "logs" ? (
                     <>
                       <div className="log-filters" aria-label="Event filters">
                         <ListFilter size={16} />

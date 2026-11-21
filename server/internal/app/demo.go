@@ -11,11 +11,13 @@ import (
 
 // These fictional fixtures are unrelated to the user's private GPS exports.
 type DemoRepository struct {
-	Rows      []Event
-	Registry  []Device
-	Now       time.Time
-	mu        sync.Mutex
-	snapshots map[string][]Event
+	Rows             []Event
+	Registry         []Device
+	Now              time.Time
+	HistoryRows      map[string][]DeviceHistoryRecord
+	mu               sync.Mutex
+	snapshots        map[string][]Event
+	historySnapshots map[string]map[string][]DeviceHistoryRecord
 }
 
 func NewDemo(now time.Time) *DemoRepository {
@@ -82,6 +84,7 @@ func NewDemo(now time.Time) *DemoRepository {
 		}
 	}
 	SortEvents(r.Rows)
+	r.HistoryRows = demoDeviceHistory(now, r.Registry)
 	return r
 }
 func (r *DemoRepository) Devices(_ context.Context, _ Identity) ([]Device, error) {
@@ -93,9 +96,15 @@ func (r *DemoRepository) Snapshot(_ context.Context) (ReadPoint, error) {
 	if r.snapshots == nil {
 		r.snapshots = map[string][]Event{}
 	}
-	p := ReadPoint{ID: fmt.Sprintf("%d-%d", r.Now.UnixNano(), len(r.Rows)), At: FormatTime(r.Now)}
+	p := ReadPoint{ID: fmt.Sprintf("%d-%d-%d-%d-%d", r.Now.UnixNano(), len(r.Rows), len(r.HistoryRows["calls"]), len(r.HistoryRows["notifications"]), len(r.HistoryRows["app-usage"])), At: FormatTime(r.Now)}
 	if r.snapshots[p.ID] == nil {
 		r.snapshots[p.ID] = slices.Clone(r.Rows)
+	}
+	if r.historySnapshots == nil {
+		r.historySnapshots = map[string]map[string][]DeviceHistoryRecord{}
+	}
+	if _, ok := r.historySnapshots[p.ID]; !ok {
+		r.historySnapshots[p.ID] = cloneDeviceHistory(r.HistoryRows)
 	}
 	return p, nil
 }

@@ -1,6 +1,24 @@
 # Location Keeper
 
-A responsive React/Vite location explorer with a small Go API, a complete event feed, and optional Android ingestion integration. The frontend runs as a Cloudflare Worker with static assets; the Go API can run behind a Cloudflare Tunnel.
+A responsive React/Vite device-history explorer with a small Go API, location maps and logs, calls, notifications, app usage, and optional Android ingestion integration. The frontend runs as a Cloudflare Worker with static assets; the Go API can run behind a Cloudflare Tunnel.
+
+## Device histories
+
+The signed-in workspace includes **Calls**, **Notifications**, and **App usage** alongside the existing location views. All share the device picker, date range (up to 90 days), and display timezone. Each history has text search, a record-type filter, expandable details, refresh, and 20-record pages. Device histories follow the same account/device permissions as location records. The public landing page is unchanged.
+
+The viewer reads the existing `history-keep` tables without modifying records or installing migrations:
+
+| View | Table | Presentation |
+| --- | --- | --- |
+| Calls | `tracker_call_logs` | Latest observed revision per device/call, with name or number, direction/type, duration in seconds, and available call metadata. |
+| Notifications | `tracker_notifications` | Historical active snapshots, posts, and removals, with app, available text, message details, and original posting time. An active snapshot does not establish current status; Android may omit or redact text. |
+| App usage | `tracker_app_usage` | Latest revisions of Android daily totals and estimated completed sessions. Foreground, visible, and foreground-service durations remain separate because they overlap. Android daily interval boundaries can differ from the selected display timezone. |
+
+Recorded, observed, and database receipt times remain distinct in expanded details. Calls and daily usage revisions are resolved before search/type filters, so an older revision cannot reappear when its replacement stops matching a filter. Notification lifecycle events are retained. Blank metadata is shown as unavailable, and URI metadata is displayed as text without loading its contents.
+
+The Go API's tracking reader needs **SELECT** permission on all three tables as well as the existing tracking/grant tables. Configure grants with your database administrator if these sections report unavailable data. Runtime does not need INSERT, UPDATE, DELETE, or CREATE on the history tables. Missing history tables or permissions do not prevent the existing location views from working. Demo mode includes fictional records for all three sections and never connects to a private database.
+
+`GET /api/history/calls`, `/api/history/notifications`, and `/api/history/app-usage` accept `device_ids`, UTC `from` inclusive / `to` exclusive, `timezone`, optional `q` (up to 200 characters), optional `event_type`, and an opaque `cursor`. Call types use Android codes 1–7; notification types are `active`, `posted`, `removed`; usage types are `daily`, `session`. Pages use the same expiring signed snapshot model as location logs and bind the account, device scope, history kind, and filters. Refresh restarts at a new snapshot.
 
 ## Run locally
 

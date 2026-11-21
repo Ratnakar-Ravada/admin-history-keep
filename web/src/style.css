@@ -2736,6 +2736,27 @@ h1 {
 
 .topbar nav {
   margin: 0 auto;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  white-space: nowrap;
+}
+.topbar nav button {
+  flex-shrink: 0;
+}
+.topbar .wordmark {
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .topbar nav {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+  .topbar nav button {
+    flex: 0 0 auto;
+    padding: 0 12px;
+  }
 }
 .map-loading {
   display: grid;

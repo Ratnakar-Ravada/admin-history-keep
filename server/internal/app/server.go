@@ -84,6 +84,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/email/disconnect", protected(s.Gmail.Disconnect))
 	mux.HandleFunc("GET /api/events", protected(s.events))
 	mux.HandleFunc("GET /api/events/changes", protected(s.changes))
+	for _, kind := range []string{"calls", "notifications", "app-usage"} {
+		mux.HandleFunc("GET /api/history/"+kind, protected(s.deviceHistory(kind)))
+	}
 	mux.HandleFunc("GET /api/locations/latest", protected(s.latest))
 	mux.HandleFunc("GET /api/locations/history", protected(s.history))
 	mux.HandleFunc("GET /api/activity/summary", protected(s.summary))

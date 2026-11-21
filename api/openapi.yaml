@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Location Keeper API
-  version: 1.1.0
+  version: 1.2.0
   description: Authenticated device history and a 20-record cursor-paginated event stream. Coordinates are private. No tracking writes or alert monitoring are provided.
 servers:
   - url: /
@@ -108,7 +108,7 @@ paths:
                 view:
                   {
                     type: string,
-                    enum: [live, journeys, logs, alerts, analytics],
+                    enum: [live, journeys, logs, alerts, analytics, calls, notifications, app-usage],
                   }
       responses:
         "200": { description: View event accepted. }
@@ -172,6 +172,9 @@ paths:
                 live_locations,
                 journeys,
                 activity_logs,
+                calls,
+                notifications,
+                app_usage,
                 devices,
                 authentication,
                 other,
@@ -182,6 +185,53 @@ paths:
         "401": { description: Sign-in required. }
         "403": { description: Advanced access required. }
         "409": { description: Cursor expired or filters changed. }
+  /api/history/{kind}:
+    get:
+      description: Read-only phone history for authorized devices. Pages contain at most 20 rows ordered by recorded_at descending then event_id descending at a fixed database snapshot. Calls use the latest observed revision per device/call_id; app usage uses the latest per device/source_key/event_type. Revision selection happens before search/type filtering. Notification lifecycle observations and revisions are retained. Daily totals are Android intervals and must not be added to session times; foreground, visible and service metrics overlap. No advanced analytics flag is required.
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: { type: string, enum: [calls, notifications, app-usage] }
+        - { $ref: "#/components/parameters/Devices" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Timezone" }
+        - name: event_type
+          in: query
+          description: Calls use Android type codes 1 through 7; notifications use active/posted/removed; app-usage uses daily/session. Omit for all types.
+          schema: { type: string }
+        - name: q
+          in: query
+          description: Case-insensitive literal substring in contact names/numbers, notification text/app names, or app usage names/packages. No regular expressions or SQL wildcards.
+          schema: { type: string, maxLength: 200 }
+        - name: cursor
+          in: query
+          description: Signed opaque cursor bound to viewer, full authorized device scope, kind and filters. Uses the configured event cursor TTL (four minutes by default).
+          schema: { type: string, maxLength: 4096 }
+      responses:
+        "200":
+          description: One history page with original metadata, separate event/observation/receipt times and optional page replay/next cursors. Empty device selection returns an empty array.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page_cursor, next_cursor, has_more, as_of, expires_at]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 20
+                    items: { $ref: "#/components/schemas/DeviceHistoryRecord" }
+                  page_cursor: { type: [string, "null"] }
+                  next_cursor: { type: [string, "null"] }
+                  has_more: { type: boolean }
+                  as_of: { type: string, format: date-time }
+                  expires_at: { type: string, format: date-time }
+        "400": { description: Invalid/repeated filters, unsupported type or tampered cursor. }
+        "401": { description: Sign-in required. }
+        "403": { description: A device is outside the current viewer's scope. }
+        "409": { description: Cursor expired or viewer/device/filter scope changed. }
+        "503": { description: Data service unavailable. history_unavailable includes a safe table/SELECT-access setup hint and no internal error details. }
   /api/devices:
     get:
       parameters:
@@ -435,6 +485,24 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
   schemas:
+    DeviceHistoryRecord:
+      type: object
+      required: [event_id, device_id, recorded_at, observed_at, received_at, event_type, fields]
+      properties:
+        event_id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        recorded_at: { type: string, format: date-time, description: Call start, notification event or usage interval/session start. }
+        observed_at: { type: string, format: date-time, description: Phone observation time retained from the uploaded revision. }
+        received_at: { type: string, format: date-time, description: Database receipt time; distinct from phone observation. }
+        event_type: { type: string }
+        source_package: { type: string }
+        call_id: { type: string, format: uuid }
+        source_id: { type: string }
+        source_key: { type: string }
+        fields:
+          type: object
+          additionalProperties: { type: [string, "null"] }
+          description: Uploaded phone metadata; omitted or null values remain unknown. Call durations are seconds; usage durations are milliseconds. Notification messages is JSON text, and text_lines is newline-separated text. Metadata truncation markers are preserved. No URI contents are fetched.
     Error:
       type: object
       required: [code, error]

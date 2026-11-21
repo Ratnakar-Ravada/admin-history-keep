@@ -169,7 +169,7 @@ func markUsage(r *http.Request, u Identity) {
 }
 func validView(s string) string {
 	switch s {
-	case "live", "journeys", "logs", "alerts", "analytics":
+	case "live", "journeys", "logs", "alerts", "analytics", "calls", "notifications", "app-usage":
 		return s
 	default:
 		return "unknown"
@@ -181,6 +181,12 @@ func serviceFor(route string) string {
 		return "usage"
 	case strings.Contains(route, "/api/analytics/"):
 		return "analytics"
+	case strings.Contains(route, "/api/history/calls"):
+		return "calls"
+	case strings.Contains(route, "/api/history/notifications"):
+		return "notifications"
+	case strings.Contains(route, "/api/history/app-usage"):
+		return "app_usage"
 	case strings.Contains(route, "/api/places/"):
 		return "place_names"
 	case strings.Contains(route, "/email/") || strings.Contains(route, "/auth/gmail/"):
@@ -289,7 +295,7 @@ func (s *Server) analyticsQuery(r *http.Request) (AnalyticsQuery, error) {
 		return q, errors.New("Choose a valid analytics range and user/session IDs")
 	}
 	switch q.Service {
-	case "", "usage", "analytics", "place_names", "email", "live_locations", "journeys", "activity_logs", "devices", "authentication", "other":
+	case "", "usage", "analytics", "place_names", "email", "live_locations", "journeys", "activity_logs", "devices", "authentication", "other", "calls", "notifications", "app_usage":
 	default:
 		return q, errors.New("Unknown service")
 	}
