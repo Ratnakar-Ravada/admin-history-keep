@@ -67,7 +67,7 @@ func (m *MemoryUsageStore) Start(_ context.Context, u Identity, c ClientInfo, no
 	user.Identity = u
 	user.Login = now
 	user.Seen = now
-	session := AppSession{ID: newUUID(), UserID: user.ID, Token: randomToken(), Advanced: user.Identity.Advanced}
+	session := AppSession{ID: newUUID(), UserID: user.ID, Token: randomToken(), Advanced: user.Identity.Advanced, Expires: u.Expires}
 	m.Sessions[session.ID] = &memoryAppSession{AppSession: session, Subject: u.Subject, Hash: sessionHash(session.Token), Started: now, Seen: now, Active: now, Expires: time.Unix(u.Expires, 0), Client: c}
 	return session, nil
 }
@@ -77,11 +77,15 @@ func (m *MemoryUsageStore) Validate(_ context.Context, subject, token string, no
 	for _, s := range m.Sessions {
 		if s.Subject == subject && s.Hash == sessionHash(token) && s.Ended == nil && s.Expires.After(now) {
 			user := m.Users[subject]
-			if user.Disabled {
+			if user == nil || user.Disabled {
 				break
+			}
+			if sessionNeedsRenewal(s.Expires.Unix(), now) {
+				s.Expires = now.Add(SessionLifetime)
 			}
 			state := s.AppSession
 			state.Advanced = user.Identity.Advanced
+			state.Expires = s.Expires.Unix()
 			return state, nil
 		}
 	}

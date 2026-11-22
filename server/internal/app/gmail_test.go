@@ -81,6 +81,14 @@ func TestGmailConsentBindsAccountStateScopeAndOfflineGrant(t *testing.T) {
 	a.OAuth = oauth2.Config{ClientID: "fixture-client", ClientSecret: "fixture-secret", Endpoint: oauth2.Endpoint{AuthURL: GoogleIssuer + "/authorize", TokenURL: provider.URL, AuthStyle: oauth2.AuthStyleInParams}, RedirectURL: a.BaseURL + "/auth/callback"}
 	a.Verifier = oidc.NewVerifier(GoogleIssuer, fixtureKeys{&key.PublicKey}, &oidc.Config{ClientID: "fixture-client"})
 	u := Identity{Subject: "owner", Email: "owner@gmail.com", EmailVerified: true, Admin: true, Expires: time.Now().Add(time.Hour).Unix()}
+	store := NewMemoryUsageStore(s.Config.Secret, false)
+	a.Usage = NewUsage(store)
+	t.Cleanup(a.Usage.Close)
+	appSession, err := store.Start(context.Background(), u, ClientInfo{}, a.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.SessionToken = appSession.Token
 	for _, name := range []string{"accepted", "other email", "other account", "wrong nonce", "wrong state", "expired flow", "send scope declined", "no offline grant"} {
 		t.Run(name, func(t *testing.T) {
 			scenario = name
@@ -147,13 +155,23 @@ func TestGmailRoutesEnforceOriginAdminAndConfiguredSender(t *testing.T) {
 	s.Gmail.enabled = true
 	s.Gmail.sender = "owner@gmail.com"
 	s.Gmail.file = filepath.Join(t.TempDir(), "token.enc")
+	store := NewMemoryUsageStore(s.Config.Secret, false)
+	s.Usage = NewUsage(store)
+	s.Auth.Usage = s.Usage
+	t.Cleanup(s.Usage.Close)
 	for _, tc := range []struct {
 		subject, email, origin string
 		code                   int
 	}{{"owner", "owner@gmail.com", "https://other.example", 403}, {"viewer", "owner@gmail.com", "http://example.test", 403}, {"owner", "someone@gmail.com", "http://example.test", 403}, {"owner", "owner@gmail.com", "http://example.test", 200}} {
 		r := httptest.NewRequest("POST", "http://example.test/api/email/connect", nil)
 		r.Header.Set("Origin", tc.origin)
-		r.AddCookie(&http.Cookie{Name: "lk_session", Value: s.Auth.pack(sessionPayload(Identity{Subject: tc.subject, Email: tc.email, EmailVerified: true, Expires: time.Now().Add(time.Hour).Unix()}))})
+		u := Identity{Subject: tc.subject, Email: tc.email, EmailVerified: true, Expires: time.Now().Add(time.Hour).Unix()}
+		state, err := store.Start(context.Background(), u, ClientInfo{}, s.Auth.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		u.SessionToken = state.Token
+		r.AddCookie(&http.Cookie{Name: "lk_session", Value: s.Auth.pack(sessionPayload(u))})
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
 		if w.Code != tc.code {

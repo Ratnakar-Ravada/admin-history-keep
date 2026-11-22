@@ -4,6 +4,8 @@ export type Device = {
   detected_device_name: string;
   label: string;
   revoked: boolean;
+  locked: boolean;
+  pin_setup_required: boolean;
 };
 export type Place = {
   label: string;

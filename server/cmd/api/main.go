@@ -59,8 +59,10 @@ func main() {
 	places := app.NewPlaces(c.GeoKey, c.Demo, cache)
 	defer places.Close()
 	var store app.UsageStore
+	var access app.DeviceAccessStore
 	if c.Demo {
 		store = app.NewMemoryUsageStore(c.Secret, true)
+		access = app.NewMemoryDeviceAccessStore(c.Secret)
 	} else {
 		appDB, err := database.Open(c.AppDBDSN, c.TiDBTransport)
 		if err != nil {
@@ -72,12 +74,17 @@ func main() {
 			log.Fatal("App analytics tables unavailable; run ENV_FILE=../.env go run ./cmd/migrateapp -apply")
 		}
 		store = sqlStore
+		access, err = app.NewSQLDeviceAccessStore(ctx, appDB, c.Secret)
+		if err != nil {
+			log.Fatal("Device access tables unavailable; run ENV_FILE=../.env go run ./cmd/migrateapp -apply")
+		}
 	}
 	usage := app.NewUsage(store)
 	defer usage.Close()
 	auth.Usage = usage
 	server := app.NewServer(repo, auth, places, c)
 	server.Usage = usage
+	server.Access = access
 	httpServer := &http.Server{Addr: c.Addr, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 16}
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)

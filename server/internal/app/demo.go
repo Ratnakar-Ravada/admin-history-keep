@@ -87,8 +87,14 @@ func NewDemo(now time.Time) *DemoRepository {
 	r.HistoryRows = demoDeviceHistory(now, r.Registry)
 	return r
 }
-func (r *DemoRepository) Devices(_ context.Context, _ Identity) ([]Device, error) {
-	return slices.Clone(r.Registry), nil
+func (r *DemoRepository) Devices(_ context.Context, u Identity) ([]Device, error) {
+	out := []Device{}
+	for _, d := range r.Registry {
+		if u.Advanced || u.EmailVerified && u.Email != "" && strings.EqualFold(d.TrackingEmail, u.Email) && !d.Revoked {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 func (r *DemoRepository) Snapshot(_ context.Context) (ReadPoint, error) {
 	r.mu.Lock()

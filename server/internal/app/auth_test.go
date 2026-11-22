@@ -99,8 +99,8 @@ func TestGoogleCodeFlowAndAccountAuthorization(t *testing.T) {
 		{name: "Workspace administrator", email: "owner@work.example", domain: "work.example", allowed: true, admin: true},
 		{name: "unverified email", unverified: true},
 		{name: "missing email", missingEmail: true},
-		{name: "unapproved account", email: "someone@gmail.com"},
-		{name: "external email is not authoritative", email: "person@external.example"},
+		{name: "ordinary verified account", email: "someone@gmail.com", allowed: true},
+		{name: "external email does not grant administrator access", email: "person@external.example", allowed: true},
 		{name: "external account pinned by subject", email: "person@external.example", subject: "pinned-owner", allowed: true, admin: true},
 		{name: "subject administrator starts without advanced access", email: "other@gmail.com", subject: "pinned-owner", allowed: true, admin: true},
 		{name: "assigned non-administrator", email: "someone@gmail.com", assigned: true, allowed: true},
@@ -159,6 +159,9 @@ func TestGoogleCodeFlowAndAccountAuthorization(t *testing.T) {
 				if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
 					t.Fatal("insecure session cookie")
 				}
+				if cookie.MaxAge < int((SessionLifetime-time.Minute).Seconds()) || cookie.MaxAge > int(SessionLifetime.Seconds()) {
+					t.Fatal("sign-in did not automatically create a remembered session")
+				}
 				r := httptest.NewRequest("GET", "https://viewer.example/api/devices", nil)
 				r.AddCookie(cookie)
 				identity, e := a.Identity(r)
@@ -171,6 +174,17 @@ func TestGoogleCodeFlowAndAccountAuthorization(t *testing.T) {
 				raw, _ := json.Marshal(identity)
 				if strings.Contains(string(raw), "fixture-access") || strings.Contains(string(raw), "email_verified") || strings.Contains(string(raw), "\"exp\"") {
 					t.Fatal("private authentication metadata leaked into API identity")
+				}
+				// Google's original ID token has expired by this point. Only the
+				// independently revocable app session is needed for return visits.
+				originalNow := a.Now
+				later := a.Now().Add(48 * time.Hour)
+				a.Now = func() time.Time { return later }
+				renewed := httptest.NewRecorder()
+				_, rememberedErr := a.Authenticate(renewed, r)
+				a.Now = originalNow
+				if rememberedErr != nil || len(renewed.Result().Cookies()) != 1 {
+					t.Fatal("remembered app session depended on the expired Google token", rememberedErr)
 				}
 			}
 			if hasSession != tc.allowed {
@@ -209,6 +223,9 @@ func TestGoogleProviderIsPinnedAndLegacyConfigurationIgnored(t *testing.T) {
 		body := `{"issuer":"https://accounts.google.com","authorization_endpoint":"https://accounts.google.com/o/oauth2/v2/auth","token_endpoint":"https://oauth2.googleapis.com/token","jwks_uri":"https://www.googleapis.com/oauth2/v3/certs"}`
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
+	// Device ownership comes from the verified email and PIN. Gmail sender
+	// administrator lists are optional and must not gate ordinary sign-in.
+	cfg.GoogleAdminEmails, cfg.GoogleAdminSubjects = "", ""
 	a, e := NewAuth(oidc.ClientContext(context.Background(), client), cfg)
 	if e != nil || calls != 1 || a.OAuth.ClientID != "google-client" || a.OAuth.RedirectURL != strings.TrimRight(cfg.BaseURL, "/")+"/auth/callback" {
 		t.Fatal("Google configuration was not applied")
@@ -216,26 +233,23 @@ func TestGoogleProviderIsPinnedAndLegacyConfigurationIgnored(t *testing.T) {
 }
 
 func TestGoogleSessionsRecheckAdministratorAllowlist(t *testing.T) {
-	s, _, _ := fixture(t, 1)
+	s, _, cookie := trackedFixture(t)
 	a := s.Auth
-	a.Demo = false
-	a.AdminEmails = []string{"owner@gmail.com"}
-	u := Identity{Subject: "google-owner", Name: "Owner", Email: "owner@gmail.com", EmailVerified: true, Expires: time.Now().Add(time.Hour).Unix()}
 	r := httptest.NewRequest("GET", "http://example.test/api/devices", nil)
-	r.AddCookie(&http.Cookie{Name: "lk_session", Value: a.pack(sessionPayload(u))})
-	if _, e := a.Identity(r); e != nil {
+	r.AddCookie(cookie)
+	if u, e := a.Identity(r); e != nil || !u.Admin {
 		t.Fatal("administrator rejected")
 	}
 	a.AdminEmails = nil
-	if _, e := a.Identity(r); e == nil {
-		t.Fatal("removed administrator retained access")
+	if u, e := a.Identity(r); e != nil || u.Admin {
+		t.Fatal("administrator removal did not preserve ordinary account sign-in")
 	}
 }
 
 func TestGoogleSettingsRequiredBeforeDiscovery(t *testing.T) {
 	for _, cfg := range []Config{
 		{GoogleClientID: "client", GoogleAdminEmails: "owner@gmail.com"},
-		{GoogleClientID: "client", GoogleClientSecret: "secret"},
+		{GoogleClientSecret: "secret"},
 		{GoogleClientID: "client", GoogleClientSecret: "secret", GoogleAdminEmails: "*@gmail.com"},
 	} {
 		if _, e := NewAuth(context.Background(), cfg); e == nil {

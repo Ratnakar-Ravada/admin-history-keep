@@ -33,6 +33,7 @@ type Config struct {
 	GmailEnabled        bool
 	GmailSenderEmail    string
 	GmailTokenFile      string
+	PINPepper           string
 }
 
 func LoadEnv(path string) error {
@@ -72,6 +73,10 @@ func ConfigFromEnv() (Config, error) {
 		return c, errors.New("TIDB_TRANSPORT must be mysql or https")
 	}
 	c.AppDBDSN = get("APP_DB_DSN", c.DSN)
+	c.PINPepper = os.Getenv("PIN_PEPPER")
+	if c.PINPepper != "" && len(c.PINPepper) < 32 {
+		return c, errors.New("PIN_PEPPER must match the registration Worker's secret and contain at least 32 bytes")
+	}
 	c.GmailEnabled = os.Getenv("GMAIL_ENABLED") == "true"
 	c.GmailSenderEmail = strings.ToLower(strings.TrimSpace(os.Getenv("GMAIL_SENDER_EMAIL")))
 	c.GmailTokenFile = get("GMAIL_TOKEN_FILE", "../.private/gmail-sender.enc")

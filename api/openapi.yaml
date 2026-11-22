@@ -1,8 +1,19 @@
 openapi: 3.1.0
 info:
   title: Location Keeper API
-  version: 1.2.0
-  description: Authenticated device history and a 20-record cursor-paginated event stream. Coordinates are private. No tracking writes or alert monitoring are provided.
+  version: 1.3.0
+  description: >-
+    Verified Google sign-in with automatically remembered, revocable app sessions.
+    Ordinary viewers discover non-revoked devices whose registered tracking_email
+    matches their normalized Google email and unlock each device with its existing
+    four-digit PIN before reading any device history. The mobile registration
+    contract uses a primary Gmail address; the dashboard does not canonicalize
+    Gmail aliases, dots or plus suffixes. The current app_users.is_advanced flag
+    grants all-device history without a PIN and Analytics access. Google environment
+    administrator lists control only Gmail sender management; legacy assigned-user
+    grants do not authorize devices. Coordinates are private. Tracking tables are
+    SELECT-only; app-owned session and unlock state is written separately. No
+    alert monitoring, PIN enrollment or OTP/forgot-PIN endpoint is provided.
 servers:
   - url: /
 security:
@@ -21,7 +32,8 @@ paths:
       security: []
       responses:
         "200":
-          description: Authentication status, safe Google viewer identity (subject, app user_id, name, email and current database is_advanced flag), analytics_enabled, demo flag, current UTC time, public map style and filter options. An unauthenticated result contains no device information.
+          description: Authentication status, safe Google viewer identity (subject, app user_id, name, email and current database is_advanced flag), analytics_enabled, demo flag, current UTC time, public map style and filter options. An unauthenticated result contains no device information. A valid session may renew its encrypted HTTP-only cookie at the daily threshold. Neither session tokens nor device unlock secrets are returned.
+        "503": { description: Durable session verification is temporarily unavailable; authentication fails closed. }
   /auth/login:
     get:
       security: []
@@ -36,11 +48,11 @@ paths:
       responses:
         "303":
           {
-            description: "Validate state, code, nonce, issuer and audience; upsert the app user and create a persistent session; set an encrypted HTTP-only session cookie or return to sign-in failure.",
+            description: "Validate state, code, nonce, issuer, audience, token expiry and verified email; upsert the app user and automatically create a remembered app session with a 400-day inactivity lifetime. Set an encrypted HTTP-only SameSite=Lax cookie (Secure on HTTPS), renewed at most daily during use, or return to sign-in failure. The app session can outlive the original Google token; ordinary sign-in retains no Google tokens.",
           }
   /auth/logout:
     post:
-      description: Requires a same-origin request. Revokes the saved app session and clears the application session cookie.
+      description: Requires a same-origin request. Durably revokes the saved app session, ends its remembered device unlocks and clears the application session cookie. A copied cookie cannot continue that session.
       responses:
         "200": { description: "Signed out." }
   /api/email/status:
@@ -187,7 +199,7 @@ paths:
         "409": { description: Cursor expired or filters changed. }
   /api/history/{kind}:
     get:
-      description: Read-only phone history for authorized devices. Pages contain at most 20 rows ordered by recorded_at descending then event_id descending at a fixed database snapshot. Calls use the latest observed revision per device/call_id; app usage uses the latest per device/source_key/event_type. Revision selection happens before search/type filtering. Notification lifecycle observations and revisions are retained. Daily totals are Android intervals and must not be added to session times; foreground, visible and service metrics overlap. No advanced analytics flag is required.
+      description: Read-only phone history for currently authorized and unlocked devices; advanced users bypass device email/PIN restrictions. Pages contain at most 20 rows ordered by recorded_at descending then event_id descending at a fixed database snapshot. Calls use the latest observed revision per device/call_id; app usage uses the latest per device/source_key/event_type. Revision selection happens before search/type filtering. Notification lifecycle observations and revisions are retained. Daily totals are Android intervals and must not be added to session times; foreground, visible and service metrics overlap. Ordinary viewers do not need the advanced flag after unlocking an email-linked device.
       parameters:
         - name: kind
           in: path
@@ -227,18 +239,20 @@ paths:
                   has_more: { type: boolean }
                   as_of: { type: string, format: date-time }
                   expires_at: { type: string, format: date-time }
-        "400": { description: Invalid/repeated filters, unsupported type or tampered cursor. }
+        "400":
+          description: Invalid/repeated filters, unsupported type or tampered cursor.
         "401": { description: Sign-in required. }
-        "403": { description: A device is outside the current viewer's scope. }
+        "403": { description: access_denied for a device outside the current viewer's scope or device_locked when a selected device requires its PIN. }
         "409": { description: Cursor expired or viewer/device/filter scope changed. }
         "503": { description: Data service unavailable. history_unavailable includes a safe table/SELECT-access setup hint and no internal error details. }
   /api/devices:
     get:
+      description: Ordinary viewers receive basic metadata for their email-linked non-revoked devices, including locked devices. Advanced viewers receive every registered device with locked=false and pin_setup_required=false. Registration hashes, tracking_email and upload tokens are never returned. Device history endpoints independently enforce current ownership, role and unlock state on every request.
       parameters:
         - { name: q, in: query, schema: { type: string, maxLength: 200 } }
       responses:
         "200":
-          description: Authorised registry only. Names can repeat; device_id is the identity. Credential hashes and upload tokens are never returned.
+          description: Authorised registry metadata with per-device locked and pin_setup_required flags. Names can repeat; device_id is the identity. An empty registry is valid.
           content:
             application/json:
               schema:
@@ -249,9 +263,72 @@ paths:
                       type: array,
                       items: { $ref: "#/components/schemas/Device" },
                     }
+        "400": { description: Search text exceeds 200 characters. }
+        "401": { $ref: "#/components/responses/Error" }
+        "503":
+          description: Device registry, session verification or durable device-access state is unavailable.
+  /api/devices/unlock:
+    post:
+      description: >-
+        Same-origin application/json request to unlock one email-linked device
+        using its existing mobile-app PIN. Leading zeroes must be preserved.
+        Unlocks are durable and bound to the app session, device, and an HMAC
+        version of the current registered email and PIN hash; ownership or PIN-hash
+        changes invalidate remembered access on subsequent requests. Advanced
+        viewers and already unlocked devices return success without PIN verification.
+        Verification reserves at most five attempts per device in a 15-minute
+        window shared across accounts and sessions. PIN enrollment, change and
+        recovery are not implemented by this API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, pin]
+              properties:
+                device_id: { type: string, format: uuid }
+                pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 4
+                  pattern: '^[0-9]{4}$'
+                  description: Four ASCII digits as a string, including any leading zeroes.
+      responses:
+        "200":
+          description: This device is unlocked for the current app session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_id, unlocked]
+                properties:
+                  device_id: { type: string, format: uuid }
+                  unlocked: { type: boolean, const: true }
+        "400":
+          description: invalid_pin; malformed JSON, unknown fields, invalid device ID or PIN other than exactly four ASCII digits as a string.
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: access_denied for a device outside the current account's scope, incorrect_pin for failed verification, pin_setup_required for missing mobile PIN enrollment, or origin_rejected for a different origin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { description: json_required; application/json content type is required. }
+        "429":
+          description: pin_rate_limited; the device's five-attempt window is exhausted.
+          headers:
+            Retry-After:
+              description: Wait before retrying, in seconds.
+              schema: { type: integer, const: 900 }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: pin_verification_unavailable when the existing registration PIN_PEPPER is not configured, or durable session/device-access storage is unavailable.
   /api/events:
     get:
-      description: Newest recorded event first. A filter/access change requires a new cursor chain. Exactly 20 maximum rows across all selected devices, including no-fix events. Repeated parameters are rejected.
+      description: Newest recorded event first. Every selected device must currently be authorized and unlocked; advanced users bypass the email/PIN restriction. A filter/access change requires a new cursor chain. Exactly 20 maximum rows across all selected devices, including no-fix events. Repeated parameters are rejected.
       parameters:
         - { $ref: "#/components/parameters/Devices" }
         - { $ref: "#/components/parameters/From" }
@@ -320,8 +397,7 @@ paths:
                   page_cursor:
                     {
                       type: [string, "null"],
-                      description: Replays this exact page at the same snapshot,
-                      including the original first page.,
+                      description: "Replays this exact page at the same snapshot, including the original first page.",
                     }
                   next_cursor: { type: [string, "null"] }
                   has_more: { type: boolean }
@@ -331,7 +407,11 @@ paths:
                     { type: string, const: "recorded_at_desc,event_id_desc" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
-        "403": { $ref: "#/components/responses/Error" }
+        "403":
+          description: access_denied for a device outside the current account's scope or device_locked for a selected device requiring its PIN.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: cursor_expired or cursor_scope_changed. Explicitly restart at the first 20; never append the restarted page to the old list.
           content:
@@ -354,6 +434,7 @@ paths:
           }
   /api/locations/latest:
     get:
+      description: Requires current access and PIN unlock for every selected device; advanced users bypass the email/PIN restriction.
       parameters:
         - { $ref: "#/components/parameters/Devices" }
       responses:
@@ -363,6 +444,7 @@ paths:
           }
   /api/locations/history:
     get:
+      description: Requires current access and PIN unlock for every selected device; advanced users bypass the email/PIN restriction.
       parameters:
         - { $ref: "#/components/parameters/Devices" }
         - { $ref: "#/components/parameters/From" }
@@ -375,6 +457,7 @@ paths:
           }
   /api/activity/summary:
     get:
+      description: Requires current access and PIN unlock for every selected device; advanced users bypass the email/PIN restriction.
       parameters:
         - { $ref: "#/components/parameters/Devices" }
         - { $ref: "#/components/parameters/From" }
@@ -387,7 +470,7 @@ paths:
           }
   /api/places/resolve:
     post:
-      description: Same-origin only. Accepts authorised event IDs instead of arbitrary coordinates. Returns cached results or pending/unavailable/not_configured/no_fix/busy statuses. Slow provider work is queued.
+      description: Same-origin only. Accepts event IDs belonging to currently authorized and unlocked devices instead of arbitrary coordinates; advanced users bypass the email/PIN restriction. Returns cached results or pending/unavailable/not_configured/no_fix/busy statuses. Slow provider work is queued.
       requestBody:
         required: true
         content:
@@ -431,8 +514,17 @@ components:
                 items: { type: object, additionalProperties: true }
               has_more: { type: boolean }
               next_cursor: { type: [string, "null"] }
+    Error:
+      description: Stable error code and safe user-facing message. No internal SQL, credentials or coordinates are included. Device reads return access_denied for an unavailable device or device_locked when PIN unlock is required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
   securitySchemes:
-    sessionCookie: { type: apiKey, in: cookie, name: lk_session }
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: lk_session
+      description: Encrypted HTTP-only SameSite=Lax persistent cookie, Secure on HTTPS. Automatic 400-day inactivity lifetime renewed at most daily. Its hashed token is checked against durable session expiry/revocation, account disabled state and the current advanced flag on every authenticated request; the original Google token is not needed for return visits.
   parameters:
     AnalyticsDays:
       name: days
@@ -452,7 +544,7 @@ components:
       {
         name: device_ids,
         in: query,
-        description: Comma-separated authorised UUIDs; maximum 20. Empty selection returns no rows.,
+        description: Comma-separated UUIDs with current viewer access and PIN unlock; maximum 20. Advanced users bypass email/PIN restrictions. Empty selection returns no rows.,
         schema: { type: string },
       }
     From:
@@ -468,8 +560,7 @@ components:
         name: to,
         in: query,
         required: true,
-        description: UTC exclusive bound,
-        at most the next local midnight.,
+        description: "UTC exclusive bound, at most the next local midnight.",
         schema: { type: string, format: date-time },
       }
     Timezone:
@@ -478,12 +569,6 @@ components:
         in: query,
         schema: { type: string, default: Asia/Kolkata },
       }
-  responses:
-    Error:
-      description: Stable error code and safe user-facing message. No internal SQL, credentials or coordinates are included.
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
   schemas:
     DeviceHistoryRecord:
       type: object
@@ -491,7 +576,7 @@ components:
       properties:
         event_id: { type: string, format: uuid }
         device_id: { type: string, format: uuid }
-        recorded_at: { type: string, format: date-time, description: Call start, notification event or usage interval/session start. }
+        recorded_at: { type: string, format: date-time, description: "Call start, notification event or usage interval/session start." }
         observed_at: { type: string, format: date-time, description: Phone observation time retained from the uploaded revision. }
         received_at: { type: string, format: date-time, description: Database receipt time; distinct from phone observation. }
         event_type: { type: string }
@@ -511,7 +596,7 @@ components:
         error: { type: string }
     Device:
       type: object
-      required: [device_id, device_name, detected_device_name, label, revoked]
+      required: [device_id, device_name, detected_device_name, label, revoked, locked, pin_setup_required]
       properties:
         device_id: { type: string, format: uuid }
         device_name: { type: string }
@@ -520,8 +605,14 @@ components:
         revoked:
           {
             type: boolean,
-            description: Upload registration status; distinct from viewer grants.,
+            description: Upload registration status. Ordinary viewers do not discover revoked devices.,
           }
+        locked:
+          type: boolean
+          description: Device history requires PIN unlock in this app session. Always false for advanced users.
+        pin_setup_required:
+          type: boolean
+          description: Registration has no PIN hash; complete existing mobile-app setup before ordinary access. Always false for advanced users.
     Event:
       type: object
       required:

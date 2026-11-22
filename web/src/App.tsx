@@ -1,5 +1,13 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
@@ -42,6 +50,13 @@ import { AnalyticsPage } from "./AnalyticsPage";
 import { useUsage } from "./useUsage";
 import { PublicLanding } from "./PublicLanding";
 import { HistoryPage } from "./HistoryPage";
+import { DeviceUnlock } from "./DeviceUnlock";
+import {
+  accessChangedEvent,
+  clearPrivateQueries,
+  deviceUnlocked,
+  unlockedSelection,
+} from "./deviceAccess";
 import type {
   Device,
   Event,
@@ -132,12 +147,31 @@ function Age({ stamp, now }: { stamp: string; now: string }) {
 }
 
 export default function App() {
+  const client = useQueryClient();
   const session = useQuery({
     queryKey: ["session"],
     queryFn: ({ signal }) => api<Session>("/api/session", { signal }),
     retry: 1,
     refetchInterval: 60000,
   });
+  useEffect(() => {
+    const expireSession = (event: globalThis.Event) => {
+      if ((event as CustomEvent).detail?.status !== 401) return;
+      clearPrivateQueries(client);
+      client.setQueryData<Session>(["session"], (current) =>
+        current ? { ...current, authenticated: false } : current,
+      );
+    };
+    window.addEventListener(accessChangedEvent, expireSession as EventListener);
+    return () =>
+      window.removeEventListener(
+        accessChangedEvent,
+        expireSession as EventListener,
+      );
+  }, [client]);
+  useLayoutEffect(() => {
+    if (!session.data?.authenticated) clearPrivateQueries(client);
+  }, [client, session.data?.authenticated]);
   if (!session.data?.authenticated)
     return (
       <PublicLanding
@@ -147,9 +181,34 @@ export default function App() {
         onRetry={() => session.refetch()}
       />
     );
-  return <Workspace session={session.data!} />;
+  const account =
+    session.data.user?.user_id ||
+    session.data.user?.subject ||
+    session.data.user?.email ||
+    "demo";
+  return (
+    <PrivateWorkspace
+      key={`${account}:${session.data.user?.email ?? ""}:${!!session.data.user?.is_advanced}`}
+      session={session.data!}
+    />
+  );
+}
+function PrivateWorkspace({ session }: { session: Session }) {
+  const client = useQueryClient();
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    clearPrivateQueries(client);
+    setReady(true);
+    return () => clearPrivateQueries(client);
+  }, [client]);
+  return ready ? (
+    <Workspace session={session} />
+  ) : (
+    <p className="boot">Loading your workspace…</p>
+  );
 }
 function Workspace({ session }: { session: Session }) {
+  const client = useQueryClient();
   const [view, setView] = useState<View>(() => {
       const v = new URLSearchParams(location.search).get("view") as View;
       return navigation.some((n) => n.id === v) &&
@@ -162,7 +221,7 @@ function Workspace({ session }: { session: Session }) {
     [search, setSearch] = useState(""),
     [peopleOpen, setPeopleOpen] = useState(false),
     [addOpen, setAddOpen] = useState(false),
-    [focused, setFocused] = useState<Event | null>(null),
+    [storedFocused, setFocused] = useState<Event | null>(null),
     [activeDevice, setActiveDevice] = useState(""),
     [period, setPeriod] = useState(() => {
       const today = dateInput(session.now, filters.timezone);
@@ -178,7 +237,8 @@ function Workspace({ session }: { session: Session }) {
       to: filters.to,
     }),
     [playIndex, setPlayIndex] = useState<number | null>(null),
-    [playing, setPlaying] = useState(false);
+    [playing, setPlaying] = useState(false),
+    [accessBlocked, setAccessBlocked] = useState(false);
   const historyView =
     view === "calls" || view === "notifications" || view === "app-usage";
   const activeNav = useRef<HTMLButtonElement | null>(null);
@@ -194,25 +254,91 @@ function Workspace({ session }: { session: Session }) {
     queryFn: ({ signal }) =>
       api<{ items: Device[] }>("/api/devices", { signal }),
     staleTime: 30000,
+    refetchInterval: 30000,
     refetchOnWindowFocus: false,
+    retry: false,
   });
-  const devices = registry.data?.items ?? [];
+  const devices = registry.isError ? [] : (registry.data?.items ?? []);
+  const unlockedDevices = devices.filter(deviceUnlocked);
+  const lockedDevices = devices.filter((device) => !deviceUnlocked(device));
+  const selectedIDs = accessBlocked
+    ? []
+    : unlockedSelection(filters.devices, devices).slice(0, session.max_devices);
+  const dataFilters = { ...filters, devices: selectedIDs };
+  const focused =
+    storedFocused && selectedIDs.includes(storedFocused.device_id)
+      ? storedFocused
+      : null;
   const initialised = useRef(false);
+  const previousAccess = useRef<string | null>(null);
+  const accessVersion = unlockedDevices
+    .map((device) => device.device_id)
+    .sort()
+    .join(",");
   useEffect(() => {
-    if (!registry.data || initialised.current) return;
+    if (!registry.data || registry.isError) return;
+    if (
+      previousAccess.current !== null &&
+      previousAccess.current
+        .split(",")
+        .some(
+          (id) =>
+            id && !unlockedDevices.some((device) => device.device_id === id),
+        )
+    ) {
+      clearPrivateQueries(client, true);
+      setFocused(null);
+      setPlayIndex(null);
+      setPlaying(false);
+      setGeneration((value) => value + 1);
+    }
+    previousAccess.current = accessVersion;
+    const firstLoad = !initialised.current;
     initialised.current = true;
-    const allowed = new Set(devices.map((d) => d.device_id));
+    setAccessBlocked(false);
     setFilters((f) => ({
       ...f,
-      devices: f.devices.length
-        ? f.devices.filter((id) => allowed.has(id))
-        : devices.slice(0, 2).map((d) => d.device_id),
+      devices:
+        firstLoad && !f.devices.length
+          ? unlockedDevices.slice(0, 2).map((d) => d.device_id)
+          : unlockedSelection(f.devices, devices),
     }));
-    if (devices[0]) setActiveDevice(devices[0].device_id);
-  }, [registry.data]);
+    if (firstLoad && unlockedDevices[0])
+      setActiveDevice(unlockedDevices[0].device_id);
+  }, [
+    registry.data,
+    registry.dataUpdatedAt,
+    registry.isError,
+    accessVersion,
+    client,
+  ]);
+  useEffect(() => {
+    const denyAccess = (event: globalThis.Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.status !== 403) return;
+      setAccessBlocked(true);
+      setFilters((current) => ({ ...current, devices: [] }));
+      setFocused(null);
+      setPlaying(false);
+      setPlayIndex(null);
+      setGeneration((value) => value + 1);
+      void client.cancelQueries({
+        predicate: (query) =>
+          !["session", "devices"].includes(String(query.queryKey[0])),
+      });
+      if (detail.path?.split("?")[0] !== "/api/devices") {
+        void client.invalidateQueries({ queryKey: ["devices"] });
+      }
+    };
+    window.addEventListener(accessChangedEvent, denyAccess);
+    return () => window.removeEventListener(accessChangedEvent, denyAccess);
+  }, [client]);
+  useLayoutEffect(() => {
+    if (accessBlocked) clearPrivateQueries(client, true);
+  }, [accessBlocked, client]);
   const selected = useMemo(
-    () => devices.filter((d) => filters.devices.includes(d.device_id)),
-    [devices, filters.devices],
+    () => unlockedDevices.filter((d) => selectedIDs.includes(d.device_id)),
+    [registry.data, selectedIDs.join(",")],
   );
   const apply = (patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -232,7 +358,7 @@ function Workspace({ session }: { session: Session }) {
     if (!initialised.current) return;
     const q = new URLSearchParams({
       view,
-      devices: [...filters.devices].sort().join(","),
+      devices: [...selectedIDs].sort().join(","),
       from: filters.from,
       to: filters.to,
       tz: filters.timezone,
@@ -246,19 +372,19 @@ function Workspace({ session }: { session: Session }) {
     }))
       if (value) q.set(key, value);
     history.replaceState(null, "", "?" + q);
-  }, [view, filters]);
+  }, [view, filters, selectedIDs.join(",")]);
   const today = dateInput(session.now, filters.timezone),
     oldest = calendarShift(today, -89);
-  const mapParams = parameters(filters, false).toString();
+  const mapParams = parameters(dataFilters, false).toString();
   const latest = useQuery({
-    queryKey: ["latest", filters.devices],
+    queryKey: ["latest", selectedIDs],
     queryFn: ({ signal }) =>
       api<{ items: Latest[]; as_of: string }>(
         "/api/locations/latest?" +
-          new URLSearchParams({ device_ids: filters.devices.join(",") }),
+          new URLSearchParams({ device_ids: selectedIDs.join(",") }),
         { signal },
       ),
-    enabled: initialised.current && !historyView,
+    enabled: initialised.current && selected.length > 0 && !historyView,
     refetchInterval: view === "live" ? 30000 : false,
     refetchOnWindowFocus: false,
   });
@@ -270,23 +396,28 @@ function Workspace({ session }: { session: Session }) {
           interruptions?: { device_id: string; recorded_at: string }[];
         }
       >("/api/locations/history?" + mapParams, { signal }),
-    enabled: initialised.current && view === "journeys",
+    enabled: initialised.current && selected.length > 0 && view === "journeys",
     refetchOnWindowFocus: false,
   });
   const summary = useQuery({
     queryKey: ["summary", mapParams],
     queryFn: ({ signal }) =>
       api<Summary>("/api/activity/summary?" + mapParams, { signal }),
-    enabled: initialised.current && view === "journeys",
+    enabled: initialised.current && selected.length > 0 && view === "journeys",
     refetchOnWindowFocus: false,
   });
-  const historyEvents = historyQuery.data?.items ?? [];
-  const liveEvents = (latest.data?.items ?? []).flatMap((x) =>
+  const historyEvents = (historyQuery.data?.items ?? []).filter((event) =>
+    selectedIDs.includes(event.device_id),
+  );
+  const latestItems = (latest.data?.items ?? []).filter((item) =>
+    selectedIDs.includes(item.device_id),
+  );
+  const liveEvents = latestItems.flatMap((x) =>
     x.latest_fix ? [x.latest_fix] : [],
   );
   const mapEvents = view === "live" ? liveEvents : historyEvents;
   const focusedDevice =
-    activeDevice && filters.devices.includes(activeDevice)
+    activeDevice && selectedIDs.includes(activeDevice)
       ? activeDevice
       : selected[0]?.device_id;
   const dayEvents = useMemo(
@@ -334,9 +465,10 @@ function Workspace({ session }: { session: Session }) {
     return () => clearInterval(id);
   }, [playing, times.length]);
   const toggleDevice = (id: string) => {
-    const next = filters.devices.includes(id)
-      ? filters.devices.filter((x) => x !== id)
-      : [...filters.devices, id];
+    if (!unlockedDevices.some((device) => device.device_id === id)) return;
+    const next = selectedIDs.includes(id)
+      ? selectedIDs.filter((x) => x !== id)
+      : [...selectedIDs, id];
     if (next.length <= session.max_devices) apply({ devices: next });
   };
   const preset = (value: string) => {
@@ -367,7 +499,7 @@ function Workspace({ session }: { session: Session }) {
     setDateError("");
     setSearch("");
     apply({
-      devices: devices.slice(0, 2).map((d) => d.device_id),
+      devices: unlockedDevices.slice(0, 2).map((d) => d.device_id),
       from: today,
       to: today,
       reasons: "",
@@ -378,10 +510,36 @@ function Workspace({ session }: { session: Session }) {
     });
   };
   const onMap = (e: Event) => {
+    if (!selectedIDs.includes(e.device_id)) return;
     setView("journeys");
     setGeneration((g) => g + 1);
     setFocused(e);
     setActiveDevice(e.device_id);
+  };
+  const onUnlocked = async (id: string) => {
+    await client.invalidateQueries({
+      queryKey: ["devices"],
+      refetchType: "none",
+    });
+    const result = await registry.refetch();
+    if (
+      !result.data ||
+      result.error ||
+      !result.data.items.some(
+        (device) => device.device_id === id && deviceUnlocked(device),
+      )
+    ) {
+      throw new Error("Device access could not be refreshed.");
+    }
+    apply({
+      devices: [
+        ...unlockedSelection(filters.devices, result.data.items).filter(
+          (selectedID) => selectedID !== id,
+        ),
+        id,
+      ].slice(-session.max_devices),
+    });
+    setActiveDevice(id);
   };
   const titles: Record<View, [string, string]> = {
     live: [
@@ -422,10 +580,23 @@ function Workspace({ session }: { session: Session }) {
       <div className="panel-heading">
         <div>
           <h2>
-            Your devices <span>{devices.length}</span>
+            {session.user?.is_advanced ? "All devices" : "Your devices"}{" "}
+            <span>{devices.length}</span>
           </h2>
-          <p>Choose who appears in this view</p>
+          <p>
+            {session.user?.is_advanced
+              ? "Advanced access · Choose any device to view"
+              : "Unlock a device, then choose what to view"}
+          </p>
         </div>
+        <button
+          className="icon-button"
+          aria-label="Refresh devices"
+          onClick={() => void registry.refetch()}
+          disabled={registry.isFetching}
+        >
+          <RefreshCw size={15} />
+        </button>
         <button
           className="icon-button"
           aria-label="Add existing device"
@@ -445,11 +616,11 @@ function Workspace({ session }: { session: Session }) {
         />
       </label>
       <div className="selection-actions">
-        <span>{filters.devices.length} selected</span>
+        <span>{selectedIDs.length} selected</span>
         <button
           onClick={() =>
             apply({
-              devices: devices
+              devices: unlockedDevices
                 .slice(0, session.max_devices)
                 .map((d) => d.device_id),
             })
@@ -460,16 +631,14 @@ function Workspace({ session }: { session: Session }) {
         <button onClick={() => apply({ devices: [] })}>Clear</button>
       </div>
       <div className="device-list">
-        {devices
+        {unlockedDevices
           .filter((d) =>
             (d.device_name + " " + d.detected_device_name)
               .toLowerCase()
               .includes(search.toLowerCase()),
           )
           .map((d) => {
-            const state = latest.data?.items.find(
-                (x) => x.device_id === d.device_id,
-              ),
+            const state = latestItems.find((x) => x.device_id === d.device_id),
               color = colour(d.device_id, devices);
             return (
               <div
@@ -483,7 +652,7 @@ function Workspace({ session }: { session: Session }) {
                 <label className="device-check">
                   <input
                     type="checkbox"
-                    checked={filters.devices.includes(d.device_id)}
+                    checked={selectedIDs.includes(d.device_id)}
                     aria-label={"Show " + d.device_name}
                     onChange={() => toggleDevice(d.device_id)}
                   />
@@ -492,9 +661,9 @@ function Workspace({ session }: { session: Session }) {
                   className="device-focus"
                   onClick={() => {
                     setActiveDevice(d.device_id);
-                    if (!filters.devices.includes(d.device_id))
+                    if (!selectedIDs.includes(d.device_id))
                       apply({
-                        devices: [...filters.devices, d.device_id].slice(
+                        devices: [...selectedIDs, d.device_id].slice(
                           -session.max_devices,
                         ),
                       });
@@ -513,7 +682,7 @@ function Workspace({ session }: { session: Session }) {
                     </small>
                     <span className="device-report">
                       {historyView ? (
-                        filters.devices.includes(d.device_id) ? (
+                        selectedIDs.includes(d.device_id) ? (
                           "Included in this history"
                         ) : (
                           "Select to include history"
@@ -540,9 +709,24 @@ function Workspace({ session }: { session: Session }) {
               </div>
             );
           })}
+        {lockedDevices
+          .filter((device) =>
+            (device.device_name + " " + device.detected_device_name)
+              .toLowerCase()
+              .includes(search.toLowerCase()),
+          )
+          .map((device) => (
+            <DeviceUnlock
+              key={device.device_id}
+              device={device}
+              onUnlocked={onUnlocked}
+            />
+          ))}
         {registry.isPending && <p className="muted-note">Loading devices…</p>}
         {!devices.length && !registry.isPending && (
-          <p className="muted-note">No devices are assigned to this account.</p>
+          <p className="muted-note">
+            No devices are linked to your signed-in email.
+          </p>
         )}
       </div>
       <ErrorBox error={registry.error} />
@@ -598,6 +782,7 @@ function Workspace({ session }: { session: Session }) {
               aria-label="Sign out"
               onClick={async () => {
                 await api("/auth/logout", { method: "POST" });
+                clearPrivateQueries(client);
                 location.assign("/");
               }}
             >
@@ -756,7 +941,8 @@ function Workspace({ session }: { session: Session }) {
               >
                 <aside
                   className={
-                    "people-panel " + (peopleOpen ? "mobile-open" : "")
+                    "people-panel " +
+                    (peopleOpen || !selected.length ? "mobile-open" : "")
                   }
                 >
                   {deviceList}
@@ -811,12 +997,39 @@ function Workspace({ session }: { session: Session }) {
                   )}
                 </aside>
                 <div className="content-column">
-                  {historyView ? (
+                  {!selected.length ? (
+                    <section
+                      className="empty-state device-access-empty"
+                      role="status"
+                    >
+                      <ShieldCheck size={28} />
+                      <h2>
+                        {registry.isPending
+                          ? "Loading your devices…"
+                          : lockedDevices.length
+                            ? "Unlock a device to view its history"
+                            : view === "logs"
+                              ? "No matching events"
+                              : "Choose a device to begin"}
+                      </h2>
+                      <p>
+                        {lockedDevices.length
+                          ? "Use the PIN set in that device’s mobile app. Each device is unlocked separately."
+                          : "Select an available device from your devices list."}
+                      </p>
+                      {accessBlocked && (
+                        <p>
+                          Device access changed. Refresh your devices to
+                          continue.
+                        </p>
+                      )}
+                    </section>
+                  ) : historyView ? (
                     <HistoryPage
                       key={view}
                       kind={view as "calls" | "notifications" | "app-usage"}
-                      filters={filters}
-                      devices={devices}
+                      filters={dataFilters}
+                      devices={unlockedDevices}
                       generation={generation}
                     />
                   ) : view === "logs" ? (
@@ -884,8 +1097,8 @@ function Workspace({ session }: { session: Session }) {
                       </div>
                       <EventFeed
                         key={generation}
-                        filters={filters}
-                        devices={devices}
+                        filters={dataFilters}
+                        devices={unlockedDevices}
                         generation={generation}
                         onMap={onMap}
                         onRestart={() => setGeneration((g) => g + 1)}
@@ -904,7 +1117,7 @@ function Workspace({ session }: { session: Session }) {
                           live={view === "live"}
                           events={playbackEvents}
                           devices={selected}
-                          registry={devices}
+                          registry={unlockedDevices}
                           style={session.map_style}
                           onSelect={setFocused}
                           lines={
@@ -1084,7 +1297,7 @@ function Workspace({ session }: { session: Session }) {
                         </>
                       ) : (
                         <div className="live-cards">
-                          {(latest.data?.items ?? []).map((x) => (
+                          {latestItems.map((x) => (
                             <article key={x.device_id}>
                               <div>
                                 <i
@@ -1232,15 +1445,16 @@ function Workspace({ session }: { session: Session }) {
           }}
         >
           <DeviceDialog
-            devices={devices}
-            selected={filters.devices}
+            devices={unlockedDevices}
+            selected={selectedIDs}
             onClose={() => setAddOpen(false)}
             onAdd={(id) => {
               if (
-                filters.devices.length < session.max_devices &&
-                !filters.devices.includes(id)
+                selectedIDs.length < session.max_devices &&
+                !selectedIDs.includes(id) &&
+                unlockedDevices.some((device) => device.device_id === id)
               )
-                apply({ devices: [...filters.devices, id] });
+                apply({ devices: [...selectedIDs, id] });
             }}
           />
         </div>

@@ -16,7 +16,7 @@ The viewer reads the existing `history-keep` tables without modifying records or
 
 Recorded, observed, and database receipt times remain distinct in expanded details. Calls and daily usage revisions are resolved before search/type filters, so an older revision cannot reappear when its replacement stops matching a filter. Notification lifecycle events are retained. Blank metadata is shown as unavailable, and URI metadata is displayed as text without loading its contents.
 
-The Go API's tracking reader needs **SELECT** permission on all three tables as well as the existing tracking/grant tables. Configure grants with your database administrator if these sections report unavailable data. Runtime does not need INSERT, UPDATE, DELETE, or CREATE on the history tables. Missing history tables or permissions do not prevent the existing location views from working. Demo mode includes fictional records for all three sections and never connects to a private database.
+The Go API's tracking reader needs **SELECT** permission on all three tables as well as `tracker_devices` and `tracker_locations`. The device registry must already include the registration service's `tracking_email` and `pin_hash` columns. Configure database permissions if these sections report unavailable data. Runtime does not need INSERT, UPDATE, DELETE, or CREATE on the tracking tables. Missing history tables or permissions do not prevent the existing location views from working. Demo mode includes fictional records for all three sections and never connects to a private database.
 
 `GET /api/history/calls`, `/api/history/notifications`, and `/api/history/app-usage` accept `device_ids`, UTC `from` inclusive / `to` exclusive, `timezone`, optional `q` (up to 200 characters), optional `event_type`, and an opaque `cursor`. Call types use Android codes 1–7; notification types are `active`, `posted`, `removed`; usage types are `daily`, `session`. Pages use the same expiring signed snapshot model as location logs and bind the account, device scope, history kind, and filters. Refresh restarts at a new snapshot.
 
@@ -135,6 +135,8 @@ python scripts/render_privacy_policy.py
 
 This writes `output/pdf/location-keeper-privacy-policy.pdf` and the website download `web/public/privacy-policy.pdf`. Rebuild the frontend after updating either public document.
 
+The public policy and its PDF were not edited for the remembered-session and device-PIN change. Review their account-access, persistence and PIN-metadata descriptions alongside `web/public/privacy.html` before rolling out that behavior.
+
 References: [Google brand verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/brand-verification), [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [sensitive-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification).
 
 ## Included
@@ -146,7 +148,7 @@ References: [Google brand verification](https://developers.google.com/identity/p
 - **Place labels:** Geoapify adapter, coalescing/rate limiting, memory or TiDB cache, expiry/backoff and accuracy-aware area/city labels. Log pagination never waits for an external lookup.
 - **Alerts:** the two approved rules are visibly marked Coming soon. Automated monitoring remains outside the implemented scope.
 - **Analytics:** persistent Google app users, tracked/revocable sessions, API/service usage, response times, errors, view opens and foreground activity. The dashboard and its APIs require the user's database `is_advanced` flag.
-- **Access:** Google sign-in with PKCE and nonce validation, verified-account allowlists, encrypted cookies, database-validated sessions, optional per-device grants, origin checks on writes and tracking SELECT-only database queries.
+- **Access:** verified Google sign-in with PKCE and nonce validation, remembered encrypted session cookies, email-linked device discovery, a separate PIN unlock for each device, current database role checks, origin checks on writes and tracking SELECT-only queries. Advanced users see every device without a PIN.
 
 The dashboard is a responsive **mobile web app**, opened in a phone or tablet browser using the same URL as the PC version. It is not a separate native dashboard app or an installable/offline PWA. The separate native `android/` app collects and uploads location reports; browser access to the dashboard does not start background phone tracking.
 
@@ -203,7 +205,7 @@ Google is the only sign-in provider. It uses Google's standard server-side autho
 
    `PUBLIC_BASE_URL` must match the browser origin. The Go API performs the redirect flow; a browser-side Google SDK is not required. Do not enter `/auth/login` as the callback.
 
-5. Copy the OAuth client ID/secret into `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Keep the secret on the server. Set `GOOGLE_ADMIN_EMAILS` to your exact Gmail or Google Workspace email address; multiple administrator addresses can be comma-separated. No wildcard domains are accepted.
+5. Copy the OAuth client ID/secret into `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Keep the secret on the server. Optional `GOOGLE_ADMIN_EMAILS` and `GOOGLE_ADMIN_SUBJECTS` identify administrators for Gmail sender management; neither setting is required for ordinary sign-in or grants device access. Administrator email entries must be exact Gmail or Google Workspace addresses; no wildcard domains are accepted.
 
 ```dotenv
 GOOGLE_CLIENT_ID=your_web_client.apps.googleusercontent.com
@@ -214,7 +216,9 @@ GOOGLE_ADMIN_SUBJECTS=
 
 Google ID-token signatures, issuer, audience, expiry, nonce and `email_verified` are checked before creating an encrypted HTTP-only session. Ordinary sign-in requests only `openid email profile` and discards its OAuth API tokens. The separate sender connection below stores its own encrypted Gmail grant. See [Google's server sign-in documentation](https://developers.google.com/identity/openid-connect/openid-connect).
 
-The signed-in identity uses Google's permanent `sub` account ID for cursors and `viewer_device_grants`. Exact email allowlisting is supported for verified Gmail addresses and Google Workspace accounts with a signed `hd` claim. A Google consumer account using a third-party address must instead be explicitly pinned in `GOOGLE_ADMIN_SUBJECTS`; Google may no longer be authoritative for that external address. Existing Google grants use the same immutable account ID. If grants were created for another identity provider, review and remap those subjects to the corresponding Google account IDs before allowing assigned users. Existing sessions from the previous provider are invalidated by this change.
+Any verified Google account can sign in, subject to Google's configured OAuth audience and the app account's disabled state. Device access is checked separately. Google's permanent `sub` identifies the app account and cursor/session scope. Ordinary viewers see only non-revoked devices whose `tracker_devices.tracking_email` matches their verified Google email, and each device remains locked until its PIN is entered. The mobile registration app's contract requires a primary `@gmail.com` address and stores its normalized value. The dashboard compares the stored address to the lowercased, trimmed sign-in email; it does not resolve aliases, remove dots, strip `+` suffixes or otherwise canonicalize Gmail addresses.
+
+For Gmail sender administration, email authorization applies only to verified Gmail addresses or Google Workspace identities with a signed `hd` claim. Pin an administrator using a third-party consumer address by immutable `GOOGLE_ADMIN_SUBJECTS`, because Google may no longer control that external email address. These optional administrator lists do not grant advanced access or bypass device PINs. Legacy `ALLOW_ASSIGNED_USERS` and `viewer_device_grants` no longer control viewer authorization.
 
 Generic `OIDC_*` configuration is no longer read. Google account settings remain blank until supplied. The checked-in `.env.example` contains placeholders; `.env` stays private.
 
@@ -264,31 +268,39 @@ ENV_FILE=/absolute/path/to/location-keeper/.env go run ./cmd/api
 | `SESSION_SECRET`                                          | A stable random secret of at least 32 bytes. Generate locally with `openssl rand -base64 48`.                                                     |
 | `PUBLIC_BASE_URL`                                         | Exact browser origin, e.g. `http://127.0.0.1:5173` for Vite or `http://127.0.0.1:8080` for the built preview. HTTPS is required outside loopback. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`                | Google OAuth Web application credentials as configured above.                                                                                     |
-| `GOOGLE_ADMIN_EMAILS`                                     | Exact administrator Gmail/Google Workspace addresses.                                                                                             |
-| `GOOGLE_ADMIN_SUBJECTS`                                   | Optional immutable Google account IDs; required for administrators with third-party consumer email addresses.                                     |
-| `ALLOW_ASSIGNED_USERS=true`                               | Optionally permit other verified Google accounts, limited by `viewer_device_grants`. Default false.                                               |
+| `GOOGLE_ADMIN_EMAILS`                                     | Optional exact Gmail/Google Workspace addresses for Gmail sender administration only.                                                              |
+| `GOOGLE_ADMIN_SUBJECTS`                                   | Optional immutable account IDs for Gmail sender administration; use these for administrators with third-party consumer addresses.                  |
+| `ALLOW_ASSIGNED_USERS`                                    | Legacy setting, ignored for viewer authorization.                                                                                                 |
+| `PIN_PEPPER`                                             | The exact existing secret from the mobile registration Worker. Keep it private on the Go host; do not generate a replacement, trim, decode or normalize it. |
 | `GEOAPIFY_API_KEY`, `MAP_PUBLIC_KEY`                      | Private reverse-geocoding and public browser-map keys as configured above.                                                                        |
 | `GMAIL_ENABLED`, `GMAIL_SENDER_EMAIL`, `GMAIL_TOKEN_FILE` | Optional Gmail sender consent and encrypted credential storage, configured above.                                                                 |
 | `PLACE_CACHE_DSN`                                         | Optional separate connection with SELECT/INSERT/UPDATE privileges on `place_cache`. Without it, the cache is in memory.                           |
-| `APP_DB_DSN`                                               | App-only connection with SELECT/INSERT/UPDATE on the four analytics tables. If blank, uses `TIDB_DSN` in a separate pool; that credential must permit the app writes. |
+| `APP_DB_DSN`                                               | App-only connection with SELECT/INSERT/UPDATE on the six app tables below. If blank, uses `TIDB_DSN` in a separate pool; that credential must permit the app writes. |
 
 Private mode fails closed when Google identity configuration is missing. A device's upload token or friendly name never grants web-viewer access.
 
 Apply reviewed additive scripts from `db/migrations` using a migration account when enabling the related integration. The API does not run migrations or modify tracking records. Use `SHOW CREATE TABLE tracker_locations` to review the installed reason constraint before changing it; current ingestion source already recognises airplane-mode reasons. The nullable airplane column is optional for viewer reads: explicit existing reason events still establish the observed on/off state, and older unknown states remain unknown.
 
-### App users, sessions and usage analytics
+### App users, remembered sessions and device PIN access
 
-Private mode requires four additive app tables. From `server/`, run once using a credential with CREATE privileges:
+Private mode requires six additive app tables. The existing registration service must first provide `tracker_devices.tracking_email` and `tracker_devices.pin_hash`; this repository's migration does not create or change those tracking columns. From `server/`, review the migration summary, then apply it using a credential with CREATE privileges:
 
 ```sh
+ENV_FILE=../.env go run ./cmd/migrateapp
 ENV_FILE=../.env go run ./cmd/migrateapp -apply
 ```
 
-This command creates/verifies only `app_users`, `app_sessions`, `app_api_requests` and `app_view_events`; it does not alter tracking tables. Without `-apply`, it shows the migration summary. These four tables have already been applied and integration-tested in the owner's current local database.
+The command reads `db/migrations/004_app_analytics.sql` and `db/migrations/005_device_access.sql` and creates/verifies only `app_users`, `app_sessions`, `app_api_requests`, `app_view_events`, `app_device_unlocks` and `app_device_pin_attempts`. The last two hold remembered device unlocks and per-device PIN attempt windows. Existing installations with the four analytics tables still need migration 005. This change contains source and documentation only: no live migration, mobile source change or deployment was performed.
 
-Restart the API, then sign in again. Older stateless cookies cannot create a tracked session. Successful Google sign-in upserts the app account by Google subject and starts a saved session. Each authenticated request validates its hashed session token against TiDB; logout, expiry or `is_disabled` prevents further use. Authentication fails closed during a database outage. Sessions retain the existing maximum one-hour lifetime. An account can have concurrent sessions in different browsers.
+Successful Google sign-in upserts the app account by Google subject and automatically creates a remembered app session; there is no remember-me checkbox. The session has a 400-day inactivity lifetime, renewed at most once per day of use together with its persistent browser cookie. The app session can outlive the original Google identity token; ordinary sign-in does not retain Google's ID, access or refresh tokens. Browser expiry rules or clearing cookies can still require sign-in sooner. An account can have concurrent sessions in different browsers. Valid older tracked sessions upgrade on their next authenticated request; expired or stateless cookies require sign-in again.
 
-`app_users.is_advanced` is the source of truth for **Analytics across all app users**. Set it directly in TiDB to grant or revoke advanced access for an existing app account:
+Every authenticated request validates the hashed app session token, session expiry/revocation, `is_disabled` and current `is_advanced` against TiDB. Logout revokes that saved session and clears its cookie; a copied cookie cannot continue using it. Authentication fails closed during a database outage. Keep `SESSION_SECRET` stable and store all six app tables durably so sessions, remembered unlocks and attempt limits survive API restarts.
+
+Ordinary users can inspect the names and basic metadata of their email-linked devices before unlocking. Locations, journeys, logs, calls, notifications, app usage and place lookup remain blocked for a locked device, including direct API requests. Enter that device's four ASCII digits as a string, preserving leading zeroes. Each unlock belongs to the current app session and device; unlocking one device does not unlock another, even if their PINs match. The saved unlock stores an HMAC version of the current registered tracking email and PIN hash, rather than the PIN. Ownership or PIN-hash changes invalidate the saved unlock on subsequent requests; logout ends it with the session. The dashboard returns neither the registration PIN hash nor the stored tracking email.
+
+`POST /api/devices/unlock` accepts same-origin JSON `{ "device_id": "a-device-uuid", "pin": "0042" }`. Verification permits at most five attempts per device in a 15-minute window shared across accounts and sessions, persists that limit in TiDB and returns `429 pin_rate_limited` with `Retry-After: 900` when exhausted. Missing mobile PIN enrollment returns `403 pin_setup_required`; missing verifier configuration returns `503 pin_verification_unavailable`. PIN enrollment/change remains in the existing mobile app. OTP recovery and a dashboard forgot-PIN flow are deferred; this release adds neither endpoint.
+
+`app_users.is_advanced` is the source of truth for **all-device access without a PIN and Analytics across all app users**. Set it directly in TiDB to grant or revoke advanced access for an existing app account:
 
 ```sql
 SELECT id, email, is_advanced FROM app_users;
@@ -298,7 +310,7 @@ UPDATE app_users SET is_advanced = TRUE WHERE id = 'the-app-user-uuid';
 
 Every authenticated API request reads the current flag from TiDB, including requests from already signed-in sessions. Refresh the browser to update the Analytics navigation. New users use the database's `FALSE` default, including Google administrators. Sign-in and API startup preserve manually assigned values; there is no synchronization from environment variables and no self-service role-changing API.
 
-`GOOGLE_ADMIN_EMAILS` and `GOOGLE_ADMIN_SUBJECTS` retain their existing sign-in/device-administrator roles; they do not grant advanced analytics. An app viewer outside those administrator lists can have advanced access through the database flag. The viewer must still be allowed to sign in under the existing access policy (`ALLOW_ASSIGNED_USERS` for ordinary viewers). The advanced flag does not grant access to additional devices or Gmail sender permissions. `is_disabled = TRUE` still blocks the account.
+Advanced users see all registered devices and their histories without email matching or PIN entry. Revoking the database flag immediately restores the ordinary email/PIN rules on subsequent API requests. `GOOGLE_ADMIN_EMAILS` and `GOOGLE_ADMIN_SUBJECTS` control only Gmail sender administration; they do not grant advanced access. The advanced flag does not grant Gmail sender permissions. `is_disabled = TRUE` blocks either account type.
 
 Restart the Go API once after updating from the earlier email-based policy. Subsequent database flag changes need no API restart or new sign-in.
 
@@ -310,7 +322,7 @@ Navigation sends a view event per view change. A visible page sends a 30-second 
 
 Usage writes use bounded batches, normally every two seconds, with an idempotent retry. The queue holds 2,048 records; overload or exhausted writes can lose telemetry. Dashboard counters report dropped records/write failures since startup. User/session creation and role checks are synchronous. History starts with this update; there is no backfill. Rows remain until an explicit retention policy removes them; the 90-day dashboard limit does not delete older rows. Demo analytics use fictional in-memory data.
 
-For separate database users, grant the tracking reader SELECT on tracking/grant tables and the app writer SELECT/INSERT/UPDATE only on the four `app_*` tables. Configure `APP_DB_DSN` for that writer. Runtime does not need CREATE or DELETE. The same `TIDB_TRANSPORT` applies to both pools.
+For separate database users, grant the tracking reader SELECT on the tracking tables, including the existing registry `tracking_email` and `pin_hash` columns, and the app writer SELECT/INSERT/UPDATE on the six app tables listed above. Configure `APP_DB_DSN` for that writer. Runtime does not need CREATE or DELETE. The same `TIDB_TRANSPORT` applies to both pools. Configure the existing registration Worker's exact `PIN_PEPPER` on the Go host before enabling ordinary PIN unlocks; generating a new value will not verify enrolled hashes. After applying the reviewed migration, restart the API, build/deploy the frontend using the existing procedure and verify both ordinary and advanced access.
 
 The opt-in integration test creates and removes only its own synthetic fixtures. Its credential additionally needs DELETE on the four app tables:
 

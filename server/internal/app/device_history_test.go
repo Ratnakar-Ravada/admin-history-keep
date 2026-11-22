@@ -216,6 +216,16 @@ func TestDeviceHistorySQLUsesBoundValuesAndGlobalRevisionScope(t *testing.T) {
 func TestDeviceHistoryNewViewsAreTrackedWithoutAdvancedAccess(t *testing.T) {
 	s, store, cookie := trackedFixture(t)
 	store.Users["fixture-google-user"].Identity.Advanced = false
+	// Ordinary history is available after each email-linked device is unlocked.
+	s.Config.PINPepper = devicePINTestPepper
+	registry := s.Repo.(*DemoRepository)
+	for i := range registry.Registry {
+		registry.Registry[i].TrackingEmail = "person@gmail.com"
+		registry.Registry[i].PINHash = devicePINGolden
+		if response := unlockRequest(s, cookie, registry.Registry[i].ID, "0042"); response.StatusCode != 200 {
+			t.Fatal("fixture device unlock failed", response.StatusCode)
+		}
+	}
 	for _, view := range []string{"calls", "notifications", "app-usage"} {
 		if w := trackedRequest(s, cookie, http.MethodPost, "/api/usage/view", `{"view":"`+view+`"}`); w.Code != 200 {
 			t.Fatalf("new view not accepted: %s: %d", view, w.Code)

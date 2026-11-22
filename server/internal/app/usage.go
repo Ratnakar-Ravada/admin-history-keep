@@ -19,7 +19,18 @@ import (
 type AppSession struct {
 	ID, UserID, Token string
 	Advanced          bool
+	Expires           int64
 }
+
+// Remembered sessions expire after inactivity and refresh at most once a day.
+// The cookie lifetime stays within browsers' 400-day persistent-cookie limit.
+const SessionLifetime = 400 * 24 * time.Hour
+const SessionRenewalInterval = 24 * time.Hour
+
+func sessionNeedsRenewal(expires int64, now time.Time) bool {
+	return expires <= now.Add(SessionLifetime-SessionRenewalInterval).Unix()
+}
+
 type ClientInfo struct{ Browser, OS, Device string }
 type UsageRecord struct {
 	ID         string    `json:"id"`

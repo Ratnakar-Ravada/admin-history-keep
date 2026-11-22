@@ -1,4 +1,5 @@
 import type { Filters } from "./types";
+import { accessChangedEvent } from "./deviceAccess";
 export class APIError extends Error {
   constructor(
     public status: number,
@@ -35,6 +36,18 @@ export async function api<T>(
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
+    if (
+      typeof window !== "undefined" &&
+      (r.status === 401 ||
+        (r.status === 403 &&
+          ["access_denied", "device_locked"].includes(e.code)))
+    ) {
+      window.dispatchEvent(
+        new CustomEvent(accessChangedEvent, {
+          detail: { status: r.status, path },
+        }),
+      );
+    }
     throw new APIError(
       r.status,
       e.code || "request_failed",

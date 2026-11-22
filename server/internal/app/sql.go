@@ -42,6 +42,11 @@ func NewSQLRepository(ctx context.Context, db *sql.DB, assigned bool) (*SQLRepos
 	if !cols["event_id"] || !cols["recorded_at"] {
 		return nil, errors.New("Tracking schema is unavailable")
 	}
+	profileRows, err := db.QueryContext(ctx, "SELECT tracking_email,pin_hash FROM tracker_devices LIMIT 0")
+	if err != nil {
+		return nil, errors.New("Device registration columns are unavailable; apply the history-keep registration migration and grant viewer SELECT access")
+	}
+	profileRows.Close()
 	r.Execution = cols["executed_at"] && cols["execution_status"]
 	r.Airplane = cols["airplane_mode_enabled"]
 	return r, nil
@@ -55,14 +60,14 @@ func stringsAny(a []string) []any {
 	return b
 }
 func (r *SQLRepository) Devices(ctx context.Context, u Identity) ([]Device, error) {
-	q := "SELECT d.device_id,COALESCE(NULLIF(d.device_name,''),NULLIF(d.detected_device_name,''),d.label),COALESCE(d.detected_device_name,''),d.label,(d.revoked_at IS NOT NULL) FROM tracker_devices d"
+	q := "SELECT d.device_id,COALESCE(NULLIF(d.device_name,''),NULLIF(d.detected_device_name,''),d.label),COALESCE(d.detected_device_name,''),d.label,(d.revoked_at IS NOT NULL),COALESCE(d.tracking_email,''),COALESCE(d.pin_hash,'') FROM tracker_devices d"
 	args := []any{}
-	if !u.Admin {
-		if !r.AllowAssigned {
+	if !u.Advanced {
+		if !u.EmailVerified || u.Email == "" {
 			return []Device{}, nil
 		}
-		q += " WHERE EXISTS(SELECT 1 FROM viewer_device_grants g WHERE g.device_id=d.device_id AND g.subject=?)"
-		args = append(args, u.Subject)
+		q += " WHERE d.tracking_email=? AND d.revoked_at IS NULL"
+		args = append(args, strings.ToLower(strings.TrimSpace(u.Email)))
 	}
 	q += " ORDER BY d.device_id"
 	rows, err := r.DB.QueryContext(ctx, q, args...)
@@ -73,7 +78,7 @@ func (r *SQLRepository) Devices(ctx context.Context, u Identity) ([]Device, erro
 	out := []Device{}
 	for rows.Next() {
 		var d Device
-		if err = rows.Scan(&d.ID, &d.Name, &d.Model, &d.Label, &d.Revoked); err != nil {
+		if err = rows.Scan(&d.ID, &d.Name, &d.Model, &d.Label, &d.Revoked, &d.TrackingEmail, &d.PINHash); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

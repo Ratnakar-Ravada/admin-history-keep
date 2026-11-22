@@ -23,10 +23,15 @@ type Server struct {
 	Now    func() time.Time
 	Gmail  *GmailSender
 	Usage  *Usage
+	Access DeviceAccessStore
 }
 
 func NewServer(repo Repository, auth *Auth, places *Places, c Config) *Server {
-	return &Server{Repo: repo, Auth: auth, Places: places, Signer: Signer{c.Secret, c.CursorTTL}, Config: c, Now: time.Now, Gmail: NewGmailSender(auth, c)}
+	s := &Server{Repo: repo, Auth: auth, Places: places, Signer: Signer{c.Secret, c.CursorTTL}, Config: c, Now: time.Now, Gmail: NewGmailSender(auth, c)}
+	if c.Demo {
+		s.Access = NewMemoryDeviceAccessStore(c.Secret)
+	}
+	return s
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -57,7 +62,7 @@ func (s *Server) Handler() http.Handler {
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 			defer cancel()
 			r = r.WithContext(ctx)
-			u, e := s.Auth.Identity(r)
+			u, e := s.Auth.Authenticate(w, r)
 			if e != nil {
 				fail(w, e)
 				return
@@ -73,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("POST /auth/logout", protected(func(w http.ResponseWriter, r *http.Request, _ Identity) { s.Auth.Logout(w, r) }))
 	mux.HandleFunc("GET /api/devices", protected(s.devices))
+	mux.HandleFunc("POST /api/devices/unlock", protected(s.unlockDevice))
 	mux.HandleFunc("POST /api/usage/heartbeat", protected(s.usageHeartbeat))
 	mux.HandleFunc("POST /api/usage/view", protected(s.usageView))
 	mux.HandleFunc("GET /api/analytics/overview", protected(s.analyticsOverview))
@@ -112,7 +118,7 @@ func (s *Server) Handler() http.Handler {
 	return base
 }
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
-	u, e := s.Auth.Identity(r)
+	u, e := s.Auth.Authenticate(w, r)
 	var apiErr APIError
 	if errors.As(e, &apiErr) && apiErr.Status >= 500 {
 		fail(w, e)
@@ -132,7 +138,7 @@ func (s *Server) authorised(r *http.Request, u Identity, ids []string) ([]Device
 	if len(ids) > MaxDevices || !ValidIDs(ids) {
 		return nil, APIError{400, "invalid_devices", "Choose up to 20 valid device IDs."}
 	}
-	devices, e := s.Repo.Devices(r.Context(), u)
+	devices, e := s.accessibleDevices(r.Context(), u)
 	if e != nil {
 		return nil, e
 	}
@@ -140,7 +146,11 @@ func (s *Server) authorised(r *http.Request, u Identity, ids []string) ([]Device
 		if !slices.ContainsFunc(devices, func(d Device) bool { return d.ID == id }) {
 			return nil, APIError{403, "access_denied", "A selected device is not available to this account."}
 		}
+		if slices.ContainsFunc(devices, func(d Device) bool { return d.ID == id && d.Locked }) {
+			return nil, APIError{403, "device_locked", "Enter this device's PIN to view its history."}
+		}
 	}
+	devices = slices.DeleteFunc(devices, func(d Device) bool { return d.Locked })
 	slices.SortFunc(devices, func(a, b Device) int { return strings.Compare(a.ID, b.ID) })
 	return devices, nil
 }
@@ -153,7 +163,7 @@ func (s *Server) filter(r *http.Request, u Identity) (Filter, []Device, error) {
 	return f, d, e
 }
 func (s *Server) devices(w http.ResponseWriter, r *http.Request, u Identity) {
-	d, e := s.Repo.Devices(r.Context(), u)
+	d, e := s.accessibleDevices(r.Context(), u)
 	if e != nil {
 		fail(w, e)
 		return
@@ -331,14 +341,16 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request, u Identity) {
 		fail(w, APIError{400, "invalid_events", "Choose up to 100 valid events."})
 		return
 	}
-	devices, e := s.Repo.Devices(r.Context(), u)
+	devices, e := s.accessibleDevices(r.Context(), u)
 	if e != nil {
 		fail(w, e)
 		return
 	}
 	allowed := []string{}
 	for _, d := range devices {
-		allowed = append(allowed, d.ID)
+		if !d.Locked {
+			allowed = append(allowed, d.ID)
+		}
 	}
 	rows, e := s.Repo.EventsByID(r.Context(), b.IDs, allowed)
 	if e != nil {

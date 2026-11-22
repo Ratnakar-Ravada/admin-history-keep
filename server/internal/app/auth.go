@@ -57,8 +57,8 @@ func newGoogleAuth(ctx context.Context, c Config, issuer string) (*Auth, error) 
 		}
 		a.AdminEmails = append(a.AdminEmails, email)
 	}
-	if c.GoogleClientID == "" || c.GoogleClientSecret == "" || len(a.Admins)+len(a.AdminEmails) == 0 {
-		return nil, errors.New("Live mode requires GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_ADMIN_EMAILS or GOOGLE_ADMIN_SUBJECTS")
+	if c.GoogleClientID == "" || c.GoogleClientSecret == "" {
+		return nil, errors.New("Live mode requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
 	}
 	p, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
@@ -112,6 +112,12 @@ func (a *Auth) cookie(w http.ResponseWriter, name, value string, age int) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(a.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: age})
 }
 func (a *Auth) Identity(r *http.Request) (Identity, error) {
+	return a.Authenticate(nil, r)
+}
+
+// Authenticate validates durable session and account state on every request.
+// A response writer lets active browsers receive the periodically renewed cookie.
+func (a *Auth) Authenticate(w http.ResponseWriter, r *http.Request) (Identity, error) {
 	if a.Demo {
 		u := Identity{Subject: "synthetic-demo", Name: "Demo workspace", Admin: true, Advanced: true}
 		if a.Usage != nil {
@@ -131,25 +137,28 @@ func (a *Auth) Identity(r *http.Request) (Identity, error) {
 	if err != nil || u.Expires <= a.Now().Unix() || u.Subject == "" || !u.EmailVerified || !validEmail(u.Email) {
 		return Identity{}, APIError{401, "sign_in_required", "Your sign-in session has expired."}
 	}
-	if a.Usage != nil {
-		if u.SessionToken == "" {
-			return Identity{}, APIError{401, "session_upgrade_required", "Sign in again to create your tracked app session."}
-		}
-		state, err := a.Usage.Store.Validate(r.Context(), u.Subject, u.SessionToken, a.Now())
-		if err != nil {
-			var api APIError
-			if errors.As(err, &api) {
-				return Identity{}, api
-			}
-			return Identity{}, APIError{503, "session_service_unavailable", "Session verification is temporarily unavailable."}
-		}
-		u.UserID = state.UserID
-		u.SessionID = state.ID
-		u.Advanced = state.Advanced
+	if a.Usage == nil || a.Usage.Store == nil {
+		return Identity{}, APIError{503, "session_service_unavailable", "Session verification is temporarily unavailable."}
 	}
+	if u.SessionToken == "" {
+		return Identity{}, APIError{401, "session_upgrade_required", "Sign in again to create your tracked app session."}
+	}
+	state, err := a.Usage.Store.Validate(r.Context(), u.Subject, u.SessionToken, a.Now())
+	if err != nil {
+		var api APIError
+		if errors.As(err, &api) {
+			return Identity{}, api
+		}
+		return Identity{}, APIError{503, "session_service_unavailable", "Session verification is temporarily unavailable."}
+	}
+	u.UserID = state.UserID
+	u.SessionID = state.ID
+	u.Advanced = state.Advanced
 	u.Admin = a.isAdmin(u)
-	if !u.Admin && !a.Assigned {
-		return Identity{}, APIError{403, "access_denied", "This account does not have viewer access."}
+	renewCookie := state.Expires > u.Expires
+	u.Expires = state.Expires
+	if w != nil && renewCookie {
+		a.cookie(w, "lk_session", a.pack(sessionPayload(u)), int(time.Unix(u.Expires, 0).Sub(a.Now()).Seconds()))
 	}
 	markUsage(r, u)
 	return u, nil
@@ -203,32 +212,28 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		fail()
 		return
 	}
-	admin := a.isAdmin(u)
-	if !admin && !a.Assigned {
+	if a.Usage == nil || a.Usage.Store == nil {
 		fail()
 		return
 	}
-	expiry := a.Now().Add(time.Hour)
-	if tokenExpiry := time.Unix(u.Expires, 0); tokenExpiry.Before(expiry) {
-		expiry = tokenExpiry
-	}
-	u.Admin = admin
+	// Google's token authenticates the sign-in. The app session has its own
+	// rolling lifetime and never stores Google's access, ID or refresh tokens.
+	expiry := a.Now().Add(SessionLifetime)
+	u.Admin = a.isAdmin(u)
 	u.Expires = expiry.Unix()
 	if u.Name == "" {
 		u.Name = "Location Keeper viewer"
 	}
-	if a.Usage != nil {
-		state, err := a.Usage.Store.Start(ctx, u, clientInfo(r.UserAgent()), a.Now().UTC())
-		if err != nil {
-			fail()
-			return
-		}
-		u.UserID = state.UserID
-		u.SessionID = state.ID
-		u.SessionToken = state.Token
-		u.Advanced = state.Advanced
-		markUsage(r, u)
+	state, err := a.Usage.Store.Start(ctx, u, clientInfo(r.UserAgent()), a.Now().UTC())
+	if err != nil {
+		fail()
+		return
 	}
+	u.UserID = state.UserID
+	u.SessionID = state.ID
+	u.SessionToken = state.Token
+	u.Advanced = state.Advanced
+	markUsage(r, u)
 	a.cookie(w, "lk_session", a.pack(sessionPayload(u)), int(expiry.Sub(a.Now()).Seconds()))
 	a.cookie(w, "lk_flow", "", -1)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -298,12 +303,15 @@ func (u *Identity) UnmarshalJSON(b []byte) error {
 	return nil
 }
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
-	if a.Usage != nil {
-		if scope, ok := r.Context().Value(usageContextKey{}).(*usageScope); ok && scope.SessionID != "" {
-			if err := a.Usage.Store.End(r.Context(), scope.SessionID, a.Now().UTC()); err != nil {
-				fail(w, err)
-				return
-			}
+	if !a.Demo {
+		u, err := a.Identity(r)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if err := a.Usage.Store.End(r.Context(), u.SessionID, a.Now().UTC()); err != nil {
+			fail(w, err)
+			return
 		}
 	}
 

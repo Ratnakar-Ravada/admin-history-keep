@@ -1,4 +1,4 @@
-// migrateapp applies only the additive app analytics schema, never tracking DDL.
+// migrateapp applies additive app analytics and device access tables, never tracking DDL.
 package main
 
 import (
@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	apply := flag.Bool("apply", false, "Apply the four additive app analytics CREATE TABLE statements")
+	apply := flag.Bool("apply", false, "Apply the six additive app analytics/device access CREATE TABLE statements")
 	flag.Parse()
 	if app.LoadEnv(os.Getenv("ENV_FILE")) != nil {
 		log.Fatal("Unable to load ENV_FILE")
@@ -23,14 +23,16 @@ func main() {
 	if err != nil {
 		log.Fatal("Check environment configuration")
 	}
-	raw, err := os.ReadFile("../db/migrations/004_app_analytics.sql")
-	if err != nil {
-		log.Fatal("Run this command from server/")
-	}
 	lines := []string{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
-			lines = append(lines, line)
+	for _, path := range []string{"../db/migrations/004_app_analytics.sql", "../db/migrations/005_device_access.sql"} {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			log.Fatal("Run this command from server/")
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+				lines = append(lines, line)
+			}
 		}
 	}
 	statements := []string{}
@@ -44,11 +46,11 @@ func main() {
 		}
 		statements = append(statements, q)
 	}
-	if len(statements) != 4 {
-		log.Fatal("Expected four additive tables")
+	if len(statements) != 6 {
+		log.Fatal("Expected six additive tables")
 	}
 	if !*apply {
-		fmt.Println("Ready: four additive app analytics tables. Pass -apply to create them.")
+		fmt.Println("Ready: six additive app analytics/device access tables. Pass -apply to create them.")
 		return
 	}
 	db, err := database.Open(cfg.AppDBDSN, cfg.TiDBTransport)
@@ -63,5 +65,5 @@ func main() {
 			log.Fatal("App schema migration failed; verify CREATE privileges")
 		}
 	}
-	fmt.Println("Created/verified app_users, app_sessions, app_api_requests and app_view_events. Tracking tables were unchanged.")
+	fmt.Println("Created/verified six app analytics/device access tables. Tracking tables were unchanged.")
 }

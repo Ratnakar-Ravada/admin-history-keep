@@ -27,11 +27,16 @@ var Statuses = []string{"fresh", "last_known", "unavailable", "disabled"}
 var Transports = []string{"unknown", "none", "wifi", "cellular", "other"}
 
 type Device struct {
-	ID      string `json:"device_id"`
-	Name    string `json:"device_name"`
-	Model   string `json:"detected_device_name"`
-	Label   string `json:"label"`
-	Revoked bool   `json:"revoked"`
+	ID               string `json:"device_id"`
+	Name             string `json:"device_name"`
+	Model            string `json:"detected_device_name"`
+	Label            string `json:"label"`
+	Revoked          bool   `json:"revoked"`
+	Locked           bool   `json:"locked"`
+	PINSetupRequired bool   `json:"pin_setup_required"`
+	// Access metadata is read only on the server and never returned to browsers.
+	TrackingEmail string `json:"-"`
+	PINHash       string `json:"-"`
 }
 type Place struct {
 	Label        string  `json:"label"`

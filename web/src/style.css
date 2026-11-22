@@ -561,6 +561,91 @@ h1 {
   margin-top: 5px;
   display: block;
 }
+.device-unlock {
+  margin: 9px 0;
+  padding: 13px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8faf5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.device-unlock-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.device-unlock-heading > svg {
+  margin-top: 2px;
+  color: #71865c;
+}
+.device-unlock h3 {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.device-unlock-heading p,
+.device-unlock-heading span {
+  display: block;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #718065;
+}
+.device-unlock-heading span {
+  font-weight: 650;
+  color: #896b3a;
+}
+.device-unlock form {
+  margin-top: 12px;
+}
+.device-unlock label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.pin-input-row {
+  display: flex;
+  gap: 6px;
+}
+.pin-input-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #cfdac4;
+  border-radius: 6px;
+  background: white;
+  font-size: 16px;
+  letter-spacing: 4px;
+}
+.pin-input-row button {
+  flex-shrink: 0;
+}
+.pin-help,
+.pin-recovery-note,
+.pin-setup-note,
+.pin-error {
+  font-size: 10px;
+  line-height: 1.7;
+  margin-top: 8px;
+  color: #718065;
+}
+.pin-recovery-note {
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+}
+.pin-error {
+  color: #a24637;
+}
+.device-access-empty {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+.device-access-empty h2 {
+  font-size: 17px;
+  margin-bottom: 9px;
+}
 .sidebar-activity {
   border-top: 1px solid #edf0e6;
   padding: 18px 16px 0;

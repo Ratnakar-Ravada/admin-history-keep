@@ -28,7 +28,7 @@ func NewSQLUsageStore(ctx context.Context, db *sql.DB, secret []byte) (*SQLUsage
 }
 
 func (s *SQLUsageStore) Start(ctx context.Context, u Identity, c ClientInfo, now time.Time) (AppSession, error) {
-	result := AppSession{ID: newUUID(), Token: randomToken()}
+	result := AppSession{ID: newUUID(), Token: randomToken(), Expires: u.Expires}
 	expires := time.Unix(u.Expires, 0).UTC()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -64,11 +64,32 @@ func bounded(v string, n int) string {
 	return v
 }
 func (s *SQLUsageStore) Validate(ctx context.Context, subject, token string, now time.Time) (AppSession, error) {
+	result, err := s.readSession(ctx, subject, token, now)
+	if err != nil || !sessionNeedsRenewal(result.Expires, now) {
+		return result, err
+	}
+	// Renew only an unexpired, non-revoked session belonging to an enabled
+	// account. Concurrent renewals cannot shorten its lifetime or undo logout.
+	_, err = s.DB.ExecContext(ctx, "UPDATE app_sessions s JOIN app_users u ON u.id=s.user_id SET s.expires_at=GREATEST(s.expires_at,?) WHERE s.id=? AND s.token_hash=? AND u.google_subject=? AND s.ended_at IS NULL AND s.expires_at>? AND u.is_disabled=0", now.Add(SessionLifetime).UTC(), result.ID, sessionHash(token), subject, now)
+	if err != nil {
+		return AppSession{}, err
+	}
+	return s.readSession(ctx, subject, token, now)
+}
+
+func (s *SQLUsageStore) readSession(ctx context.Context, subject, token string, now time.Time) (AppSession, error) {
 	var result AppSession
 	var disabled bool
-	err := s.DB.QueryRowContext(ctx, "SELECT s.id,u.id,u.is_advanced,u.is_disabled FROM app_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.token_hash=? AND u.google_subject=? AND s.ended_at IS NULL AND s.expires_at>?", sessionHash(token), subject, now).Scan(&result.ID, &result.UserID, &result.Advanced, &disabled)
+	var expires string
+	err := s.DB.QueryRowContext(ctx, "SELECT s.id,u.id,u.is_advanced,u.is_disabled,"+dateSQL("s.expires_at")+" FROM app_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.token_hash=? AND u.google_subject=? AND s.ended_at IS NULL AND s.expires_at>?", sessionHash(token), subject, now).Scan(&result.ID, &result.UserID, &result.Advanced, &disabled, &expires)
 	if errors.Is(err, sql.ErrNoRows) || disabled {
 		return result, APIError{401, "session_expired", "Your app session ended. Sign in again."}
+	}
+	if err == nil {
+		result.Expires = ParseTime(expires).Unix()
+		if result.Expires <= now.Unix() {
+			return AppSession{}, APIError{401, "session_expired", "Your app session ended. Sign in again."}
+		}
 	}
 	return result, err
 }
